@@ -36,16 +36,19 @@ class MealModelConfig:
     IMG_MODEL_NAME = 'mobilenetv4_conv_aa_large' #.e230_r448_in12k_ft_in1k'
     IMG_MODEL_UNFREEZE = "blocks.4|conv_head|norm_head" # выбрать последние 1-2 слоя при необходимости
 
-    IMG_MODEL_FEATURE_DIM = 1280 # img_model.num_features lies telling it is 960
+    IMG_MODEL_FEATURE_DIM = 1280 
+    IMG_PROJ_IN_DIM = 2 * IMG_MODEL_FEATURE_DIM  # 2560 = avg||max после conv_head
+
     COMMON_FEATURES_DIM = 256
     REGRESSION_HEAD_DIM = 1
+
     DROPOUT_FEATURES = 0.2
     DROPOUT_FUSION = 0.2
 
     # train config
     N_BATCH = 32
-    N_EPOCHS = 20 # 10 for CPU (2.5 hours)
-    PATIENCE = 4 # ранняя остановка обучения, если метрики не растут
+    N_EPOCHS = 30 # 10 for CPU (2.5 hours)
+    PATIENCE = 6 # ранняя остановка обучения, если метрики не растут
     N_ITER = -1 #32 # для отладки, -1 без ограничений
     
     # optimizer
@@ -89,7 +92,9 @@ class MealModelNN(nn.Module):
                 
         # проекционный слой для выравнивания размерностей признаков разных модальностей       
         self.text_proj = nn.Linear(in_features=self.text_model.config.hidden_size, out_features=config.COMMON_FEATURES_DIM)
-        self.img_proj = nn.Linear(in_features=config.IMG_MODEL_FEATURE_DIM, out_features=config.COMMON_FEATURES_DIM) # type: ignore
+        
+         # вход img_proj теперь 2*C (avg||max по feature map)
+        self.img_proj = nn.Linear(in_features=config.IMG_PROJ_IN_DIM, out_features=config.COMMON_FEATURES_DIM) # type: ignore
 
         # слой нормализации для проекций признаков + dropout
         self.norm_layer = nn.LayerNorm(config.COMMON_FEATURES_DIM)
@@ -118,10 +123,19 @@ class MealModelNN(nn.Module):
         text_out = self.text_model(input_ids, attention_mask).last_hidden_state      
         text_features = text_out[:, 0, :] # берем состояние 1-ого [CLS] токена
 
-        # 2 - image features
-        img_out = self.img_model(images)
-        img_features = img_out
-
+        # 2 - image features - заменяем GAP на spatial pooling
+        #img_out = self.img_model(images)
+        #img_features = img_out
+        
+        # 2 - image features - вызываем без GAP
+        feature_map = self.img_model.forward_features(images)                  # [B, 960, H, W]
+        feature_map = self.img_model.conv_head(feature_map)                    # [B, 1280, H, W] 
+        feature_map = self.img_model.norm_head(feature_map)
+        # spatial pooling (avg + max)
+        avg = nn.functional.adaptive_avg_pool2d(feature_map, 1).flatten(1)     # [[B, 1280]
+        mx  = nn.functional.adaptive_max_pool2d(feature_map, 1).flatten(1)     # [B, 1280]
+        img_features = torch.cat([avg, mx], dim=1)                             # [B, 2560]
+        
         # 3 - features projection
         text_proj = self.text_proj(text_features)
         img_proj = self.img_proj(img_features)
