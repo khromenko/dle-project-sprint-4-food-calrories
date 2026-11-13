@@ -31,10 +31,10 @@ class MealModelConfig:
 
     # models config
     TEXT_MODEL_NAME = 'distilbert-base-uncased'
-    TEXT_MODEL_UNFREEZE = "" # выбрать последние 1-2 слоя при необходимости
+    TEXT_MODEL_UNFREEZE = "transformer.layer.5" # выбрать последние 1-2 слоя при необходимости
 
     IMG_MODEL_NAME = 'mobilenetv4_conv_aa_large' #.e230_r448_in12k_ft_in1k'
-    IMG_MODEL_UNFREEZE = "" # выбрать последние 1-2 слоя при необходимости
+    IMG_MODEL_UNFREEZE = "blocks.4|conv_head|norm_head" # выбрать последние 1-2 слоя при необходимости
 
     IMG_MODEL_FEATURE_DIM = 1280 # img_model.num_features lies telling it is 960
     COMMON_FEATURES_DIM = 256
@@ -43,14 +43,14 @@ class MealModelConfig:
     DROPOUT_FUSION = 0.1
 
     # train config
-    N_BATCH = 8
-    N_EPOCHS = 10 # 30
-    PATIENCE = 3 # ранняя остановка обучения, если метрики не растут
+    N_BATCH = 16
+    N_EPOCHS = 20 # 10 for CPU (2.5 hours)
+    PATIENCE = 4 # ранняя остановка обучения, если метрики не растут
     N_ITER = -1 #32 # для отладки, -1 без ограничений
     
     # optimizer
-    LR_TEXT_MODEL = 3e-5
-    LR_IMG_MODEL = 1e-4
+    LR_TEXT_MODEL = 1e-5
+    LR_IMG_MODEL = 1e-5
     LR_PROJ = 1e-4
     LR_FUSION = 1e-4
     LR_REGRESSION_HEAD = 1e-4
@@ -149,6 +149,7 @@ def unfreeze_model_params(model: MealModelNN, config: MealModelConfig):
 
     # freeze all text and img model parameters unless they have config to unfreeze
     for m, unfreeze, model_name in zip([model.text_model, model.img_model], [config.TEXT_MODEL_UNFREEZE, config.IMG_MODEL_UNFREEZE], [config.TEXT_MODEL_NAME, config.IMG_MODEL_NAME]):
+        
         for pname, p in m.named_parameters():
             p.requires_grad_(False)            
 
