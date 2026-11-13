@@ -39,11 +39,11 @@ class MealModelConfig:
     IMG_MODEL_FEATURE_DIM = 1280 # img_model.num_features lies telling it is 960
     COMMON_FEATURES_DIM = 256
     REGRESSION_HEAD_DIM = 1
-    DROPOUT_FEATURES = 0.1
-    DROPOUT_FUSION = 0.1
+    DROPOUT_FEATURES = 0.2
+    DROPOUT_FUSION = 0.2
 
     # train config
-    N_BATCH = 16
+    N_BATCH = 32
     N_EPOCHS = 20 # 10 for CPU (2.5 hours)
     PATIENCE = 4 # ранняя остановка обучения, если метрики не растут
     N_ITER = -1 #32 # для отладки, -1 без ограничений
