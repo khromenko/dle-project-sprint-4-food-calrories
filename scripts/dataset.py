@@ -27,6 +27,15 @@ class MealDataset(Dataset):
             raise RuntimeError(e)
                 
         self.df = df
+        self.target_mean = model_config.TARGET_MEAN
+        self.target_std = model_config.TARGET_STD
+
+        # проверить что значения не отличаются
+        if split == 'train':
+            print(f'expected TARGET_MEAN = {model_config.TARGET_MEAN}, real data =  {df["total_calories"].mean():.2f}')
+            print(f'expected TARGET_STD  = {model_config.TARGET_STD}, real data = {df["total_calories"].std():.2f}')           
+
+        
         self.img_path = path.Path(model_config.IMAGES_PATH)
 
         img_model_config = timm.get_pretrained_cfg(model_name=model_config.IMG_MODEL_NAME); assert img_model_config is not None
@@ -63,6 +72,8 @@ class MealDataset(Dataset):
         text = _INGR_RE.findall(text)
         
         target = item['total_calories']
+        # масштабируем
+        target_norm = (target - self.target_mean)/self.target_std
 
         original_image = Image.open(self.img_path / dish_id / 'rgb.png')
         image = self.img_transforms(image=np.array(original_image))["image"]
@@ -70,7 +81,7 @@ class MealDataset(Dataset):
         return {
             'text': ", ".join(text),
             'image': image,
-            'target': target
+            'target': target_norm
         }
     
 def collate_fn(batch, tokenizer: transformers.BertTokenizer):
@@ -97,5 +108,5 @@ def collate_fn(batch, tokenizer: transformers.BertTokenizer):
         'input_ids': tokenized['input_ids'],
         'attention_mask': tokenized['attention_mask'],
         'images': images,
-        'target': targets
+        'target': targets      
     }
