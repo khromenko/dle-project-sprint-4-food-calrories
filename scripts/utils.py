@@ -23,8 +23,9 @@ def set_random(seed=43):
 class MealModelConfig:
 
     SEED = 43
-    DATASET_PATH = 'data/meal_combined.csv'
+    DATASET_PATH_ORIGINGAL = 'data/meal_combined.csv'
     DATASET_PATH_NO_OUTLIERS = 'data/meal_combined_cleaned.csv'
+    DATASET_PATH = DATASET_PATH_NO_OUTLIERS
     IMAGES_PATH = 'data/images'
 
     # параметры средних и отклонений train датасета
@@ -32,16 +33,17 @@ class MealModelConfig:
     TARGET_STD = 221
 
     # для 2-х задачной модели - масса и кал/100г
-    MASS_LOG_MEAN = 5.0932
-    MASS_LOG_STD  = 0.8334
-    K_100_LOG_MEAN = 4.5942
-    K_100_LOG_STD  = 0.7317
+    # активипуем удаление выброса - эксперимент 6.
+    # MASS_LOG_MEAN = 5.0932
+    # MASS_LOG_STD  = 0.8334
+    # K_100_LOG_MEAN = 4.5942
+    # K_100_LOG_STD  = 0.7317
 
-    # удаление выброса - Эксперимент 6
-    # MASS_LOG_MEAN = 5.0921
-    # MASS_LOG_STD  = 0.8317
-    # K_100_LOG_MEAN = 4.5941
-    # K_100_LOG_STD  = 0.7318
+    # удаление выброса - Эксперимент 6 + очищенный датасет
+    MASS_LOG_MEAN = 5.0921
+    MASS_LOG_STD  = 0.8317
+    K_100_LOG_MEAN = 4.5941
+    K_100_LOG_STD  = 0.7318
     ###
 
     # models config
