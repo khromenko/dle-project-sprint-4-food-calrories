@@ -47,34 +47,39 @@ class MealDataset(Dataset):
         img_model_config = timm.get_pretrained_cfg(model_name=model_config.IMG_MODEL_NAME); assert img_model_config is not None
 
         img_size = img_model_config.input_size[1] # CxHxW
-        self.img_transforms = A.Compose([
+        
+        # базовые трансформы 
+        base_transforms_train = [
             A.SmallestMaxSize(max_size=img_size),
             A.RandomCrop(height=img_size, width=img_size),
-
-            # дополнительные аугментации для Эксперимента 6
-            # A.Affine(scale=(0.8, 1.2),
-            #             rotate=(-15, 15),
-            #             translate_percent=(-0.1, 0.1),
-            #             shear=(-10, 10),
-            #             fill=0,
-            #             p=0.5),
-            # A.CoarseDropout(
-            #     num_holes_range=(2, 8),
-            #     hole_height_range=(int(0.07 * img_size),
-            #                         int(0.15 * img_size)),
-            #     hole_width_range=(int(0.1 * img_size),
-            #                         int(0.15 * img_size)),
-            #     fill=0,
-            #     p=0.5),
-            # A.ColorJitter(brightness=0.2,
-            #                 contrast=0.2,
-            #                 saturation=0.2,
-            #                 hue=0.1,
-            #                 p=0.5),
-
+        ]
+        base_transforms_val = [
+            A.SmallestMaxSize(max_size=img_size),
+            A.CenterCrop(height=img_size, width=img_size),
+        ]
+        
+        # аугментации для train - расширяем датасет
+        aug_transforms = []
+        if split == 'train':
+            aug_transforms = [
+                A.Affine(scale=(0.8, 1.2), rotate=(-15, 15), translate_percent=(-0.1, 0.1),
+                         shear=(-10, 10), fill=0, p=0.5),
+                A.CoarseDropout(num_holes_range=(2, 8),
+                                hole_height_range=(int(0.07 * img_size), int(0.15 * img_size)),
+                                hole_width_range=(int(0.1 * img_size), int(0.15 * img_size)),
+                                fill=0, p=0.5),
+                A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05, p=0.5),
+            ]
+        
+        post_transforms = [
             A.Normalize(mean=img_model_config.mean, std=img_model_config.std),
             A.ToTensorV2()
-        ])        
+        ]
+
+        if split == 'train':
+            self.img_transforms = A.Compose(base_transforms_train + aug_transforms + post_transforms)
+        else:
+            self.img_transforms = A.Compose(base_transforms_val + aug_transforms + post_transforms)     
 
     def __len__(self):
         return len(self.df)
