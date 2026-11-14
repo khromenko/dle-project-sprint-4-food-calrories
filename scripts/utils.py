@@ -77,7 +77,7 @@ class MealModelConfig:
     MODEL_SAVE_NAME = 'best_model.pth'
     MODEL_LOG_SAVE_PATH = 'data/model'
 
-    DEBUG = True # False
+    DEBUG = False
 
 
 def log_fn(debug_msg: str, config):

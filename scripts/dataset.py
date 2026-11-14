@@ -36,9 +36,9 @@ class MealDataset(Dataset):
             print(f'expected TARGET_MEAN = {model_config.TARGET_MEAN}, real data =  {df["total_calories"].mean():.2f}')
             print(f'expected TARGET_STD  = {model_config.TARGET_STD}, real data = {df["total_calories"].std():.2f}')           
 
-            _m = np.log(['total_mass'])
+            _m = np.log(df['total_mass'])
             print(f'expected MASS_LOG  = ({model_config.MASS_LOG_MEAN}, {model_config.MASS_LOG_STD}), real = ({_m.mean():.4f}, {_m.std():.4f})')
-            _k = df['total_mass'].apply(lambda r: r['total_calories']/r['total_mass']*100)
+            _k = df.apply(lambda r: r['total_calories']/r['total_mass']*100, axis=1)
             _k = np.log(_k[_k>0])
             print(f'expected K100_LOG  = ({model_config.K_100_LOG_MEAN}, {model_config.K_100_LOG_STD}), real = ({_k.mean():.4f}, {_k.std():.4f})')
        
