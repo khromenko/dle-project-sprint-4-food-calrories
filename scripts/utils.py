@@ -24,10 +24,25 @@ class MealModelConfig:
 
     SEED = 43
     DATASET_PATH = 'data/meal_combined.csv'
+    DATASET_PATH_NO_OUTLIERS = 'data/meal_combined_cleaned.csv'
     IMAGES_PATH = 'data/images'
 
+    # параметры средних и отклонений train датасета
     TARGET_MEAN = 255
     TARGET_STD = 221
+
+    # для 2-х задачной модели - масса и кал/100г
+    MASS_LOG_MEAN = 5.0932
+    MASS_LOG_STD  = 0.8334
+    K_100_LOG_MEAN = 4.5942
+    K_100_LOG_STD  = 0.7317
+
+    # удаление выброса - Эксперимент 6
+    # MASS_LOG_MEAN = 5.0921
+    # MASS_LOG_STD  = 0.8317
+    # K_100_LOG_MEAN = 4.5941
+    # K_100_LOG_STD  = 0.7318
+    ###
 
     # models config
     TEXT_MODEL_NAME = 'distilbert-base-uncased'
@@ -36,12 +51,10 @@ class MealModelConfig:
     IMG_MODEL_NAME = 'mobilenetv4_conv_aa_large' #.e230_r448_in12k_ft_in1k'
     IMG_MODEL_UNFREEZE = "blocks.4|conv_head|norm_head" # выбрать последние 1-2 слоя при необходимости
 
-    IMG_MODEL_FEATURE_DIM = 1280 
-    IMG_PROJ_IN_DIM = 2 * IMG_MODEL_FEATURE_DIM  # 2560 = avg||max после conv_head
-
+    IMG_MODEL_FEATURE_DIM = 1280 # img_model.num_features lies telling it is 960
     COMMON_FEATURES_DIM = 256
     REGRESSION_HEAD_DIM = 1
-
+    
     DROPOUT_FEATURES = 0.2
     DROPOUT_FUSION = 0.2
 
@@ -86,15 +99,9 @@ class MealModelNN(nn.Module):
         self.text_model: DistilBertModel = AutoModel.from_pretrained(config.TEXT_MODEL_NAME)
         self.img_model: MobileNetV3 = timm.create_model(config.IMG_MODEL_NAME, pretrained=True, num_classes=0)
 
-        # нормализация выходов признаков
-        # self.text_norm = nn.LayerNorm(config.COMMON_FEATURES_DIM)
-        # self.img_norm  = nn.LayerNorm(config.COMMON_FEATURES_DIM)
-                
         # проекционный слой для выравнивания размерностей признаков разных модальностей       
         self.text_proj = nn.Linear(in_features=self.text_model.config.hidden_size, out_features=config.COMMON_FEATURES_DIM)
-        
-         # вход img_proj теперь 2*C (avg||max по feature map)
-        self.img_proj = nn.Linear(in_features=config.IMG_PROJ_IN_DIM, out_features=config.COMMON_FEATURES_DIM) # type: ignore
+        self.img_proj = nn.Linear(in_features=self.config.IMG_MODEL_FEATURE_DIM, out_features=config.COMMON_FEATURES_DIM) # type: ignore
 
         # слой нормализации для проекций признаков + dropout
         self.norm_layer = nn.LayerNorm(config.COMMON_FEATURES_DIM)
@@ -112,29 +119,32 @@ class MealModelNN(nn.Module):
             nn.Dropout(config.DROPOUT_FUSION)
         )
         
-        # финальный выход - регрессионный полносвязный слой
-        self.regression_head = nn.Linear(in_features=config.COMMON_FEATURES_DIM, out_features=config.REGRESSION_HEAD_DIM) 
+        # финальный выход 1 - k_100 - регрессионный полносвязный слой
+        self.regression_head_k_100 = nn.Linear(in_features=config.COMMON_FEATURES_DIM, out_features=config.REGRESSION_HEAD_DIM) 
+        # финальный выход 2 - M 
+        self.regression_head_mass = nn.Linear(in_features=config.COMMON_FEATURES_DIM, out_features=config.REGRESSION_HEAD_DIM) 
 
 
     def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor, images: torch.Tensor):
+        """
+        Выполняет расчет слоев модели
+
+        Returns:
+            tuple(pred_kal_norm, kal_100_lognorm, mass_lognorm)
+                - pred_kal_norm - расчетный результат калорийности блюда (kal_100 * mass), нормализованное значение на MEAN/STD
+                - kal_100_lognorm - предсказанный результат калорийности/100г,  лог масштаб и нормализация на MEAN/STD       
+                - mass_lognorm - предсказанный результат массы блюда, лог масштаб и нормализация на MEAN/STD       
+        
+        """
         #self.log(f'forward() input_ids = {input_ids.shape}, images = {images.shape}')
 
         # 1 - text features
         text_out = self.text_model(input_ids, attention_mask).last_hidden_state      
         text_features = text_out[:, 0, :] # берем состояние 1-ого [CLS] токена
 
-        # 2 - image features - заменяем GAP на spatial pooling
-        #img_out = self.img_model(images)
-        #img_features = img_out
-        
-        # 2 - image features - вызываем без GAP
-        feature_map = self.img_model.forward_features(images)                  # [B, 960, H, W]
-        feature_map = self.img_model.conv_head(feature_map)                    # [B, 1280, H, W] 
-        feature_map = self.img_model.norm_head(feature_map)
-        # spatial pooling (avg + max)
-        avg = nn.functional.adaptive_avg_pool2d(feature_map, 1).flatten(1)     # [[B, 1280]
-        mx  = nn.functional.adaptive_max_pool2d(feature_map, 1).flatten(1)     # [B, 1280]
-        img_features = torch.cat([avg, mx], dim=1)                             # [B, 2560]
+        # 2 - image features
+        img_out = self.img_model(images)
+        img_features = img_out
         
         # 3 - features projection
         text_proj = self.text_proj(text_features)
@@ -151,10 +161,21 @@ class MealModelNN(nn.Module):
         # 5.2 - fusion
         fusion_out = self.fusion(torch.concat([text_proj, img_proj], dim=1))
         
-        # 6 - regression head
-        regression_out = self.regression_head(fusion_out).squeeze(-1) # [B, 1] → [B]
-        
-        return regression_out
+        # 6.1 - regression head - kal_100
+        kal_100_lognorm = self.regression_head_k_100(fusion_out).squeeze(-1) # [B, 1] → [B]
+        # 6.2 - regression head - mass
+        mass_lognorm = self.regression_head_mass(fusion_out).squeeze(-1) 
+
+        # 7- reconstruct to real units (from log -> norm)
+        pred_mass_log    = mass_lognorm * self.config.MASS_LOG_STD + self.config.MASS_LOG_MEAN
+        pred_mass    = torch.exp(pred_mass_log)      
+        pred_kal_100_log = kal_100_lognorm * self.config.K_100_LOG_STD + self.config.K_100_LOG_MEAN
+        pred_kal_100 = torch.exp(pred_kal_100_log)   
+        pred_kal = pred_kal_100 * pred_mass / 100.0
+
+        pred_kal_norm = (pred_kal - self.config.TARGET_MEAN)/self.config.TARGET_STD
+
+        return pred_kal_norm, kal_100_lognorm, mass_lognorm
 
 def unfreeze_model_params(model: MealModelNN, config: MealModelConfig):
     """
@@ -225,8 +246,11 @@ def train(model: MealModelNN, config: MealModelConfig, optimizer: torch.optim.Ad
 
     model.train()
     i = 0
-    running_huber = 0
+    running_loss = 0
     running_mae = 0
+
+    running_kal_100_mae = 0
+    running_mass_mae = 0
 
     start = perf_counter()
     for data in tqdm(dataloader, 'training'):
@@ -236,19 +260,22 @@ def train(model: MealModelNN, config: MealModelConfig, optimizer: torch.optim.Ad
         attention_mask = data['attention_mask'].to(device)
         images = data['images'].to(device)
         target = data['target'].to(device)
+        target_kal_100 = data['target_kal_100'].to(device)
+        target_mass = data['target_mass'].to(device)
         
-        target_mean = config.TARGET_MEAN
-        target_std = config.TARGET_STD
-
         optimizer.zero_grad()
         
-        result = model(input_ids, attention_mask, images)
-        
+        result_kal, result_k_100, result_mass = model(input_ids, attention_mask, images)
+                
         #log(f'result = {result}')
         #log(f'target = {target}')
 
-        loss_huber = huber_metric(result, target)
-        loss_huber.backward()
+        loss_huber_kal_100 = huber_metric(result_k_100, target_kal_100)
+        loss_huber_mass = huber_metric(result_mass, target_mass)
+
+        # совместный loss для обучения обоих голов, loss_huber_mass как дополнительный, поэтому 0.3
+        loss = loss_huber_kal_100 + 0.3*loss_huber_mass
+        loss.backward()
         
         # clip grad norm
         torch.nn.utils.clip_grad_norm_(
@@ -261,26 +288,50 @@ def train(model: MealModelNN, config: MealModelConfig, optimizer: torch.optim.Ad
         if scheduler is not None:
             scheduler.step()
 
-        with torch.no_grad():
-            result_real = result * target_std + target_mean
-            target_real = target * target_std + target_mean
-            mae = mae_metric(result_real, target_real)
+        # метрики MAE
+        with torch.no_grad():            
+            mass_real = torch.exp(target_mass * model.config.MASS_LOG_STD + model.config.MASS_LOG_MEAN)
+            mass_pred = torch.exp(result_mass * model.config.MASS_LOG_STD + model.config.MASS_LOG_MEAN)
+            mass_mae = mae_metric(mass_pred, mass_real)
 
-        #log(f'loss_huber = {loss_huber.item():.2f}, metric mae = {mae.item():.2f}')
+            kal_100_real = torch.exp(target_kal_100 * model.config.K_100_LOG_STD + model.config.K_100_LOG_MEAN)
+            kal_100_pred = torch.exp(result_k_100 * model.config.K_100_LOG_STD + model.config.K_100_LOG_MEAN)
+            kal_100_mae = mae_metric(kal_100_pred, kal_100_real)
 
-        running_huber += loss_huber.item()
-        running_mae += mae.item()
+            kal_pred = result_kal * model.config.TARGET_STD + model.config.TARGET_MEAN
+            kal_real = target * model.config.TARGET_STD + model.config.TARGET_MEAN
+            kal_mae = mae_metric(kal_pred, kal_real)
+
+        running_loss += loss.item()
+        running_mae += kal_mae.item()
+
+        running_kal_100_mae += kal_100_mae.item()
+        running_mass_mae += mass_mae.item()
+
+        log(f'loss = {loss.item():.4f}, \
+            loss_huber_kal_100 = {loss_huber_kal_100.item():.4f}, \
+            loss_huber_mass = {loss_huber_mass.item():.4f}')
+
+        log(f'mae = {kal_mae:.4f}, \
+              kal_100_mae = {kal_100_mae:.4f},\
+              mass_mae = {mass_mae:.4f}')
 
         if i % 50 == 0:
-            log(f'running_huber = {running_huber/i:.4f}, running_mae = {running_mae/i:.4f}')
+            log(f'running_loss = {running_loss/i:.4f}, \
+                running_mae = {running_mae/i:.4f}, \
+                running_kal_100_mae = {running_kal_100_mae/i:.4f},\
+                running_mass_mae = {running_mass_mae/i:.4f}')
         
         if i == config.N_ITER:
             print(f'debug early stop - i = {i}')
             break
 
-    train_huber_loss = running_huber / i
+    train_huber_loss = running_loss / i
     train_mae_loss = running_mae / i
-    return train_huber_loss, train_mae_loss, perf_counter() - start
+    train_metric_kal_100_mae = running_kal_100_mae / i
+    train_metric_mass_mae = running_mass_mae / i
+
+    return train_huber_loss, train_mae_loss, train_metric_kal_100_mae, train_metric_mass_mae, perf_counter() - start
 
 def validate(model: MealModelNN, config: MealModelConfig, dataloader: DataLoader):
     log = partial(log_fn, config=config)
@@ -293,6 +344,8 @@ def validate(model: MealModelNN, config: MealModelConfig, dataloader: DataLoader
     i = 0
     running_huber = 0
     running_mae = 0
+    running_kal_100_mae = 0
+    running_mass_mae = 0
     for data in tqdm(dataloader, 'validation'):
         i += 1
 
@@ -300,35 +353,62 @@ def validate(model: MealModelNN, config: MealModelConfig, dataloader: DataLoader
         attention_mask = data['attention_mask'].to(device)
         images = data['images'].to(device)
         target = data['target'].to(device)
-
-        target_mean = config.TARGET_MEAN
-        target_std = config.TARGET_STD
+        target_kal_100 = data['target_kal_100'].to(device)
+        target_mass = data['target_mass'].to(device)
 
         with torch.no_grad():        
-            result = model(input_ids, attention_mask, images)
+            result_kal, result_k_100, result_mass = model(input_ids, attention_mask, images)
 
-            # huber
-            loss_huber = huber_metric(result, target)
+            # loss huber
+            loss_huber_kal_100 = huber_metric(result_k_100, target_kal_100)
+            loss_huber_mass = huber_metric(result_mass, target_mass)
+            loss_huber = loss_huber_kal_100 + 0.3*loss_huber_mass
 
             # mae
-            result_real = result * target_std + target_mean
-            target_real = target * target_std + target_mean
-            mae = mae_metric(result_real, target_real)
+            mass_real = torch.exp(target_mass * model.config.MASS_LOG_STD + model.config.MASS_LOG_MEAN)
+            mass_pred = torch.exp(result_mass * model.config.MASS_LOG_STD + model.config.MASS_LOG_MEAN)
+            mass_mae = mae_metric(mass_pred, mass_real)
 
-            #log(f'result = {result}')
-            #log(f'target = {target}')
-            #log(f'huber loss = {loss_huber.item():.4f}, mae metric = {mae.item():.4f}')
+            kal_100_real = torch.exp(target_kal_100 * model.config.K_100_LOG_STD + model.config.K_100_LOG_MEAN)
+            kal_100_pred = torch.exp(result_k_100 * model.config.K_100_LOG_STD + model.config.K_100_LOG_MEAN)
+            kal_100_mae = mae_metric(kal_100_pred, kal_100_real)
+
+            kal_pred = result_kal * model.config.TARGET_STD + model.config.TARGET_MEAN
+            kal_real = target * model.config.TARGET_STD + model.config.TARGET_MEAN
+            kal_mae = mae_metric(kal_pred, kal_real)
+
+            log(f'result_kal = {result_kal}')
+            log(f'target = {target}')
+            
+            log(f'result_k_100 = {result_k_100}')
+            log(f'target_kal_100 = {target_kal_100}')
+            
+            log(f'result_mass = {result_mass}')
+            log(f'target_mass = {target_mass}')
+            
+            log(f'huber loss = {loss_huber.item():.4f}, \
+                loss_huber_kal_100: {loss_huber_kal_100.item():.4f}, \
+                loss_huber_mass = {loss_huber_mass.item():.4f}')
+            
+            log(f'mae metric = {kal_mae.item():.4f}, \
+                kal_100_mae = {kal_100_mae.item():.4f},\
+                mass_mae = {mass_mae.item():.4f}')
             
             running_huber += loss_huber.item()
-            running_mae += mae.item()
+            running_mae += kal_mae.item()
+            running_kal_100_mae += kal_100_mae.item()
+            running_mass_mae += mass_mae.item()
 
         if i == config.N_ITER:
             log(f'debug early stop - i = {i}')
             break
 
     val_loss_huber = running_huber/i
-    val_metric_mea = running_mae/i
-    return val_loss_huber, val_metric_mea, perf_counter() - start
+    val_metric_mae = running_mae/i
+    val_metric_kal_100_mae = running_kal_100_mae / i
+    val_metric_mass_mae = running_mass_mae / i
+
+    return val_loss_huber, val_metric_mae, val_metric_kal_100_mae, val_metric_mass_mae, perf_counter() - start
 
 def save_model(model: MealModelNN, config: MealModelConfig):
     """
