@@ -20,6 +20,11 @@
 
 В качестве менеджера окружения используется **uv**, среда **Python 3.10**.
 
+ Install uv
+```bash
+# Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
 ### Создание virtual environment (Python 3.10)
 
 ```bash
@@ -94,3 +99,10 @@ TODO: ...
 - `scripts` - код обучения и работы с данными
 - `notebook.ipynb` - ноутбук с EDA и запусками обучения
 - `README.md` - описание проекта и результатов
+
+---
+Git config for VM
+```bash
+git config --global user.email "alexrk6@gmail.com"
+git config --global user.name "Alex Khromenko"
+```
