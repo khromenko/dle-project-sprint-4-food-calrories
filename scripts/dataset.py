@@ -31,6 +31,24 @@ _HINT_RULES = [
                      'egg', 'turkey', 'shrimp')),
 ]
 
+def _preprocess_ingredients(ingr_name: str) -> list:
+    """
+    Единый препроцессинг строки `ingr_name` из csv -> список названий ингредиентов.
+
+    Используется и для текста в DistilBERT, и для BoW-векторизатора (Эксперимент 11),
+    чтобы словари train/test совпадали. Убирает мусорные символы ('(', ')', '.', ',')
+    и выкидывает пустые/'plate only' токены.
+    """
+    names = _INGR_RE.findall(ingr_name)
+    cleaned = []
+    for n in names:
+        n = n.replace('(', ' ').replace(')', ' ')
+        n = re.sub(r'[.,;]', ' ', n)
+        n = re.sub(r'\s+', ' ', n).strip().lower()
+        if n and n != 'plate only':
+            cleaned.append(n)
+    return cleaned
+
 def _dish_hint(ingredients: list) -> str:
     """Определяет грубый тип блюда по списку ингредиентов (по приоритету правил)."""
     joined = ' '.join(ingredients).lower()
@@ -64,16 +82,28 @@ class MealDataset(Dataset):
         if split == 'train': 
             self.verify_mean_std(df)
 
-        # Эксперимент 11: BoW-векторизатор
+                # Эксперимент 11: BoW-векторизатор
         self.bow_matrix = None
-        if model_config.USE_BOW:      
-            text = df['ingr_name'].values
-            raw_texts = [', '.join(_INGR_RE.findall(s)) for s in text]
+        if model_config.USE_BOW:
+            # токенизируем ТЕМ ЖЕ препроцессингом, что и текст для DistilBERT,
+            # иначе состязание 'spinach (raw)'/'spinach (cooked)', дефисы и проч. дадут
+            # несовпадающие словари train/test (что и давало перекос в vocab).
+            raw_texts = [', '.join(_preprocess_ingredients(s)) for s in df['ingr_name'].values]
             if split == 'train':
+                # счётчик биграмм: ловит 'green beans', 'bean sprouts', 'peanut butter' и т.п.
+                # как единые признаки. ngram_range=(1, 2) при 196 названиях ингредиентов
+                # даёт словарь порядка 3-4к (max_features лишь верхняя граница).
                 self.bow_vectorizer = CountVectorizer(
-                    max_features=model_config.BOW_DIM, #768 (всего 555 ингредиентов в `ingredients.csv`)                    
+                    ngram_range=(1, 2),
+                    max_features=model_config.BOW_DIM,  # 768
                 )
                 self.bow_matrix = self.bow_vectorizer.fit_transform(raw_texts)
+
+                # РЕАЛЬНАЯ размерность словаря - может быть меньше max_features (BOW_DIM).
+                # Проставляем в config, чтобы MealModelNN построил bow_norm/bow_head по факту.
+                model_config.bow_dim = int(len(self.bow_vectorizer.vocabulary_))
+                print(f'[BoW] train vocab size = {model_config.bow_dim} '
+                      f'(max_features={model_config.BOW_DIM}, ngram_range=(1, 2))')
             else:
                 assert bow_vectorizer is not None, 'Для val/test передаётся bow_vectorizer, обученный на train'
                 self.bow_vectorizer = bow_vectorizer
@@ -156,9 +186,8 @@ class MealDataset(Dataset):
         item = self.df.iloc[index]
         dish_id = item['dish_id']
 
-        # парсим текст со списком в реальный список
-        text = item['ingr_name']
-        text = _INGR_RE.findall(text)
+                # парсим текст со списком в реальный список
+        text = _preprocess_ingredients(item['ingr_name'])
 
         # Эксперимент 9: добавляем текстовые подсказки о БЖУ:
         # - количество ингредиентов 
@@ -185,12 +214,12 @@ class MealDataset(Dataset):
         original_image = Image.open(self.img_path / dish_id / 'rgb.png')
         image = self.img_transforms(image=np.array(original_image))["image"]
 
-        # Эксперимент 11 (bow)
+                # Эксперимент 11 (bow)
         bow_vec = None
         if self.config.USE_BOW:
             bow_vec = self.bow_matrix[index].toarray().ravel().astype(np.float32) # type: ignore
         else:
-            bow_vec = np.zeros(self.config.BOW_DIM, dtype=np.float32)
+            bow_vec = np.zeros(self.config.bow_dim, dtype=np.float32)
 
         return {
             'text': hinted_text,

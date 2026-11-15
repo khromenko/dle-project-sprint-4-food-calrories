@@ -68,7 +68,15 @@ class MealModelConfig:
     # bow_head инициализируется нулём -> на старте модель == Exp-10 (BoW ничего не добавляет),
     # по мере обучения добавляет только то, что основная сеть не объяснила.
     USE_BOW = True              # False = ведёт себя как Exp-10 (для обратной совместимости)
-    BOW_DIM = 768               # размер BoW-вектора (max_features у CountVectorizer)
+    BOW_DIM = 768               # max_features у CountVectorizer (верхняя граница словаря)
+
+    # Реальная размерность BoW-вектора. Словарь CountVectorizer обычно МЕНЬШЕ BOW_DIM
+    # (на нашем train-сплите уникальных токенов ~209, т.е. вектор = 207).
+    # Значение проставляется в dataset.MealDataset (split='train') по факту
+    # len(bow_vectorizer.vocabulary_) и читается MealModelNN при построении bow_norm/bow_head.
+    # Атрибут экземпляра: config.bow_dim
+    bow_dim: int = BOW_DIM
+
     LR_BOW = 1e-3               # LR для BoW-ветки (линейная, можно побольше)
     LOSS_BOW_FINAL_WEIGHT = 1.0 # вес члена huber(kal_final, target) — обучает BoW-остаток
     BOW_RESIDUAL_L2 = 1e-3      # штраф на магнитуду остатка (shrinkage, как в GBM)
@@ -155,13 +163,16 @@ class MealModelNN(nn.Module):
             nn.Dropout(config.DROPOUT_FUSION)
         )
 
-        # Эксперимент 11: BoW-ветка (residual). Инициализация нулём -> на старте вклад 0.
+                # Эксперимент 11: BoW-ветка (residual). Инициализация нулём -> на старте вклад 0.
+        # ВАЖНО: реальная размерность BoW берётся из конфига `bow_dim` (её выставляет dataset
+        # по факту `len(vectorizer.vocabulary_)`), а не из BOW_DIM (это max_features -
+        # верхняя граница, реально словарь мельче, напр. 207 при max_features=768).
         if config.USE_BOW:
             assert not config.STUB_TEXT, 'USE_BOW и STUB_TEXT несовместимы'
-            self.bow_norm = nn.LayerNorm(config.BOW_DIM)
+            self.bow_norm = nn.LayerNorm(config.bow_dim)
             self.bow_dropout = nn.Dropout(config.BOW_DROPOUT)
             
-            self.bow_head = nn.Linear(config.BOW_DIM, config.REGRESSION_HEAD_DIM)
+            self.bow_head = nn.Linear(config.bow_dim, config.REGRESSION_HEAD_DIM)
             nn.init.zeros_(self.bow_head.weight)
             nn.init.zeros_(self.bow_head.bias)
         
