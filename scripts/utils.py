@@ -29,8 +29,11 @@ class MealModelConfig:
     IMAGES_PATH = 'data/images'
 
     # параметры средних и отклонений train датасета
-    TARGET_MEAN = 255
-    TARGET_STD = 221
+    #TARGET_MEAN = 255
+    #TARGET_STD = 221
+    # удаление выброса - Эксперимент 6 + очищенный датасет
+    TARGET_MEAN = 254
+    TARGET_STD = 209
 
     # для 2-х задачной модели - масса и кал/100г
     # активируем удаление выброса - эксперимент 6.
@@ -62,26 +65,6 @@ class MealModelConfig:
     DROPOUT_FEATURES = 0.3
     DROPOUT_FUSION = 0.3
 
-    # Эксперимент 11: BoW-остаток (работает на "остатках")
-    # BoW-ветка предсказывает ОСТАТОК (residual) поверх ансамбля основной сети:
-    #     kal_final_norm = kal_ensemble_norm + bow_residual_norm
-    # bow_head инициализируется нулём -> на старте модель == Exp-10 (BoW ничего не добавляет),
-    # по мере обучения добавляет только то, что основная сеть не объяснила.
-    USE_BOW = True              # False = ведёт себя как Exp-10 (для обратной совместимости)
-    BOW_DIM = 768               # max_features у CountVectorizer (верхняя граница словаря)
-
-    # Реальная размерность BoW-вектора. Словарь CountVectorizer обычно МЕНЬШЕ BOW_DIM
-    # (на нашем train-сплите уникальных токенов ~209, т.е. вектор = 207).
-    # Значение проставляется в dataset.MealDataset (split='train') по факту
-    # len(bow_vectorizer.vocabulary_) и читается MealModelNN при построении bow_norm/bow_head.
-    # Атрибут экземпляра: config.bow_dim
-    bow_dim: int = BOW_DIM
-
-    LR_BOW = 1e-3               # LR для BoW-ветки (линейная, можно побольше)
-    LOSS_BOW_FINAL_WEIGHT = 1.0 # вес члена huber(kal_final, target) — обучает BoW-остаток
-    BOW_RESIDUAL_L2 = 1e-3      # штраф на магнитуду остатка (shrinkage, как в GBM)
-    BOW_DROPOUT = 0.2           # dropout на входе BoW-ветки
-
     # train config
     N_BATCH = 32
     N_EPOCHS = 24 # 10 for CPU (2.5 hours)
@@ -109,6 +92,9 @@ class MealModelConfig:
     # kal = KAL_DIRECT_WEIGHT * direct + (1 - KAL_DIRECT_WEIGHT) * (k100 * mass / 100)
     # Эксперимент 10 - увеличиваем долю прямой головы до 0.5 -> 0.65
     KAL_DIRECT_WEIGHT = 0.65
+
+    # Эксперимент 12 - снижаем с 1.0 до 0.5 для kal_direct - чтобы большие ошибки меньше оттягивали на себя (ушли из MSE зоны)
+    HUBER_DELTA_KAL_DIRECT = 0.5 # 0.5 * TARGET_STD ≈ 110 kcal — порог MSE/L1 для калорий
 
     TARGET_METRIC = 50
 
@@ -162,20 +148,7 @@ class MealModelNN(nn.Module):
             nn.GELU(),
             nn.Dropout(config.DROPOUT_FUSION)
         )
-
-                # Эксперимент 11: BoW-ветка (residual). Инициализация нулём -> на старте вклад 0.
-        # ВАЖНО: реальная размерность BoW берётся из конфига `bow_dim` (её выставляет dataset
-        # по факту `len(vectorizer.vocabulary_)`), а не из BOW_DIM (это max_features -
-        # верхняя граница, реально словарь мельче, напр. 207 при max_features=768).
-        if config.USE_BOW:
-            assert not config.STUB_TEXT, 'USE_BOW и STUB_TEXT несовместимы'
-            self.bow_norm = nn.LayerNorm(config.bow_dim)
-            self.bow_dropout = nn.Dropout(config.BOW_DROPOUT)
-            
-            self.bow_head = nn.Linear(config.bow_dim, config.REGRESSION_HEAD_DIM)
-            nn.init.zeros_(self.bow_head.weight)
-            nn.init.zeros_(self.bow_head.bias)
-        
+      
         # Эксперимент 4 - разделяем таргет на две головы
         # Эксперимент 9 - разделяем таргет на 3 головы головы - 1 основная (прямой таргет как в Эксп.4) + 2 вспомогательные
         # регрессионный выход 1 - k_100
@@ -187,7 +160,7 @@ class MealModelNN(nn.Module):
         #   - выход через произведение k100 * mass - оставлен как дополнительный  
         self.regression_head_kal = nn.Linear(in_features=config.COMMON_FEATURES_DIM, out_features=config.REGRESSION_HEAD_DIM) 
 
-    def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor, images: torch.Tensor, bow: torch.Tensor = None): # type: ignore
+    def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor, images: torch.Tensor): # type: ignore
         """
         Выполняет расчет слоев модели
 
@@ -256,19 +229,7 @@ class MealModelNN(nn.Module):
             self.config.KAL_DIRECT_WEIGHT * kal_direct_norm + (1.0 - self.config.KAL_DIRECT_WEIGHT) * kal_product_norm
         )
 
-        # 9 - Эксперимент 11: BoW-остаток поверх ансамбля - kal_final_norm — для метрики, остальное — диагностика
-        if self.config.USE_BOW:
-            assert bow is not None, 'USE_BOW=True, но bow не передан'
-            bow_in = self.bow_dropout(self.bow_norm(bow))
-            bow_residual_norm = self.bow_head(bow_in).squeeze(-1)
-            kal_final_norm = kal_ensemble_norm + bow_residual_norm
-        else:
-            bow_residual_norm = torch.zeros_like(kal_ensemble_norm)
-            kal_final_norm = kal_ensemble_norm
-
-        return (kal_final_norm, kal_ensemble_norm, kal_direct_norm,
-                kal_product_norm, kal_100_lognorm, mass_lognorm, bow_residual_norm)
-        
+        return kal_ensemble_norm, kal_direct_norm, kal_product_norm, kal_100_lognorm, mass_lognorm        
 
 def unfreeze_model_params(model: MealModelNN, config: MealModelConfig):
     """
@@ -345,8 +306,6 @@ def train(model: MealModelNN, config: MealModelConfig, optimizer: torch.optim.Ad
     running_mass_mae = 0
     running_direct_mae = 0
 
-    running_bow_residual_abs = 0
-
     start = perf_counter()
     for data in tqdm(dataloader, 'training'):
         i += 1
@@ -358,32 +317,21 @@ def train(model: MealModelNN, config: MealModelConfig, optimizer: torch.optim.Ad
         target_kal_100 = data['target_kal_100'].to(device)
         target_mass = data['target_mass'].to(device)
         
-        # Эксперимент 11
-        bow = data['bow'].to(device) 
-        
         optimizer.zero_grad()
 
-        # forward возвращает 7 значений: bow, ensemble, direct, product, k100, mass, bow_residual
-        result_kal, result_kal_ensemble, result_kal_direct, result_kal_product, \
-            result_k_100, result_mass, result_bow_residual = model(input_ids, attention_mask, images, bow)
+        # forward возвращает 5 значений: ensemble, direct, product, k100, mass
+        result_kal, result_kal_direct, result_kal_product, result_k_100, result_mass = model(input_ids, attention_mask, images)
                 
         # loss составной: прямой kal (вес 1.0) + mass + k100
-        loss_huber_kal_direct = huber_metric(result_kal_direct, target)
+        # Эксперимент 12 - delta = 0.5 (default = 1)
+        loss_huber_kal_direct = huber_metric(result_kal_direct, target, delta=config.HUBER_DELTA_KAL_DIRECT)
         loss_huber_kal_100 = huber_metric(result_k_100, target_kal_100)
         loss_huber_mass = huber_metric(result_mass, target_mass)
-        
-        # Эксперимент 11: член по финальному выходу (с BoW-остатком)
-        loss_huber_kal_final = huber_metric(result_kal, target)
-        # L2-штраф (shrinkage) на магнитуду остатка
-        bow_l2 = (result_bow_residual ** 2).mean()
 
         loss = (loss_huber_kal_direct
             + config.LOSS_MASS_WEIGHT * loss_huber_mass
             + config.LOSS_K_100_WEIGHT * loss_huber_kal_100
-            + config.LOSS_BOW_FINAL_WEIGHT * loss_huber_kal_final
-            + config.BOW_RESIDUAL_L2 * bow_l2
         )
-
         loss.backward()
         
         # clip grad norm
@@ -417,18 +365,12 @@ def train(model: MealModelNN, config: MealModelConfig, optimizer: torch.optim.Ad
             kal_product_pred = result_kal_product * model.config.TARGET_STD + model.config.TARGET_MEAN
             kal_product_mae = mae_metric(kal_product_pred, kal_real)
 
-            # bow-остаток в реальных величинах
-            residuals_kal = result_bow_residual * model.config.TARGET_STD
-
         running_loss += loss.item()
         running_mae += kal_mae.item()
 
         running_kal_100_mae += kal_100_mae.item()
         running_mass_mae += mass_mae.item()
         running_direct_mae += kal_direct_mae.item()
-
-        # смотрим средний добавленный остаток
-        running_bow_residual_abs += residuals_kal.abs().mean().item()
 
         log(f'loss = {loss.item():.4f}, \
             loss_huber_kal_direct = {loss_huber_kal_direct.item():.4f}, \
@@ -454,10 +396,8 @@ def train(model: MealModelNN, config: MealModelConfig, optimizer: torch.optim.Ad
     train_metric_kal_100_mae = running_kal_100_mae / i
     train_metric_mass_mae = running_mass_mae / i
     train_metric_direct_mae = running_direct_mae / i
-    
-    train_bow_residual = running_bow_residual_abs / i
-    
-    return train_huber_loss, train_mae_loss, train_metric_kal_100_mae, train_metric_mass_mae, train_metric_direct_mae, train_bow_residual, perf_counter() - start
+
+    return train_huber_loss, train_mae_loss, train_metric_kal_100_mae, train_metric_mass_mae, train_metric_direct_mae, perf_counter() - start
 
 def validate(model: MealModelNN, config: MealModelConfig, dataloader: DataLoader):
     log = partial(log_fn, config=config)
@@ -473,8 +413,6 @@ def validate(model: MealModelNN, config: MealModelConfig, dataloader: DataLoader
     running_kal_100_mae = 0
     running_mass_mae = 0
     running_direct_mae = 0
-    running_bow_residual_abs = 0
-
     for data in tqdm(dataloader, 'validation'):
         i += 1
 
@@ -484,31 +422,22 @@ def validate(model: MealModelNN, config: MealModelConfig, dataloader: DataLoader
         target = data['target'].to(device)
         target_kal_100 = data['target_kal_100'].to(device)
         target_mass = data['target_mass'].to(device)
-        # Эксперимент 11
-        bow = data['bow'].to(device) 
 
         with torch.no_grad():        
-            # forward возвращает 7 значений: bow, ensemble, direct, product, k100, mass, bow_residual
-            result_kal, result_kal_ensemble, result_kal_direct, result_kal_product, \
-                result_k_100, result_mass, result_bow_residual = model(input_ids, attention_mask, images, bow)
+            # forward возвращает 5 значений: ensemble, direct, product, k100, mass
+            result_kal, result_kal_direct, result_kal_product, result_k_100, result_mass = model(input_ids, attention_mask, images)
 
             # loss huber (direct + mass + k100)
-            loss_huber_kal_direct = huber_metric(result_kal_direct, target)
+            # Эксперимент 12 - delta = 0.5 (default = 1)
+            loss_huber_kal_direct = huber_metric(result_kal_direct, target, delta=config.HUBER_DELTA_KAL_DIRECT)
             loss_huber_kal_100 = huber_metric(result_k_100, target_kal_100)
             loss_huber_mass = huber_metric(result_mass, target_mass)
-
-             # Эксперимент 11: член по финальному выходу (с BoW-остатком)
-            loss_huber_kal_final = huber_metric(result_kal, target)
-            # L2-штраф (shrinkage) на магнитуду остатка
-            bow_l2 = (result_bow_residual ** 2).mean()
-    
-            loss = (loss_huber_kal_direct
+            loss_huber = (
+                loss_huber_kal_direct
                 + config.LOSS_MASS_WEIGHT * loss_huber_mass
                 + config.LOSS_K_100_WEIGHT * loss_huber_kal_100
-                + config.LOSS_BOW_FINAL_WEIGHT * loss_huber_kal_final
-                + config.BOW_RESIDUAL_L2 * bow_l2
             )
-            
+
             # mae
             mass_real = torch.exp(target_mass * model.config.MASS_LOG_STD + model.config.MASS_LOG_MEAN)
             mass_pred = torch.exp(result_mass * model.config.MASS_LOG_STD + model.config.MASS_LOG_MEAN)
@@ -528,9 +457,6 @@ def validate(model: MealModelNN, config: MealModelConfig, dataloader: DataLoader
             kal_product_pred = result_kal_product * model.config.TARGET_STD + model.config.TARGET_MEAN
             kal_product_mae = mae_metric(kal_product_pred, kal_real)
 
-            # bow-остаток в реальных величинах
-            residuals_kal = result_bow_residual * model.config.TARGET_STD
-
             log(f'result_kal = {result_kal}')
             log(f'target = {target}')
             
@@ -540,7 +466,7 @@ def validate(model: MealModelNN, config: MealModelConfig, dataloader: DataLoader
             log(f'result_mass = {result_mass}')
             log(f'target_mass = {target_mass}')
             
-            log(f'huber loss = {loss.item():.4f}, \
+            log(f'huber loss = {loss_huber.item():.4f}, \
                 loss_huber_kal_direct: {loss_huber_kal_direct.item():.4f}, \
                 loss_huber_kal_100: {loss_huber_kal_100.item():.4f}, \
                 loss_huber_mass = {loss_huber_mass.item():.4f}')
@@ -551,13 +477,11 @@ def validate(model: MealModelNN, config: MealModelConfig, dataloader: DataLoader
                 kal_100_mae = {kal_100_mae.item():.4f},\
                 mass_mae = {mass_mae.item():.4f}')
             
-            running_huber += loss.item()
+            running_huber += loss_huber.item()
             running_mae += kal_mae.item()
             running_kal_100_mae += kal_100_mae.item()
             running_mass_mae += mass_mae.item()
             running_direct_mae += kal_direct_mae.item()
-
-            running_bow_residual_abs += residuals_kal.abs().mean().item()
 
         if i == config.N_ITER:
             log(f'debug early stop - i = {i}')
@@ -568,9 +492,8 @@ def validate(model: MealModelNN, config: MealModelConfig, dataloader: DataLoader
     val_metric_kal_100_mae = running_kal_100_mae / i
     val_metric_mass_mae = running_mass_mae / i
     val_metric_direct_mae = running_direct_mae / i
-    val_bow_residual = running_bow_residual_abs / i
 
-    return val_loss_huber, val_metric_mae, val_metric_kal_100_mae, val_metric_mass_mae, val_metric_direct_mae, val_bow_residual, perf_counter() - start
+    return val_loss_huber, val_metric_mae, val_metric_kal_100_mae, val_metric_mass_mae, val_metric_direct_mae, perf_counter() - start
 
 def save_model(model: MealModelNN, config: MealModelConfig):
     """

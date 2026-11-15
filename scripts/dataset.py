@@ -9,7 +9,6 @@ from PIL import Image
 import albumentations as A
 import timm
 import transformers
-from sklearn.feature_extraction.text import CountVectorizer
 
 # locals
 import scripts.utils as utils
@@ -33,11 +32,9 @@ _HINT_RULES = [
 
 def _preprocess_ingredients(ingr_name: str) -> list:
     """
-    Единый препроцессинг строки `ingr_name` из csv -> список названий ингредиентов.
+    Препроцессинг строки `ingr_name` из csv -> список названий ингредиентов.
 
-    Используется и для текста в DistilBERT, и для BoW-векторизатора (Эксперимент 11),
-    чтобы словари train/test совпадали. Убирает мусорные символы ('(', ')', '.', ',')
-    и выкидывает пустые/'plate only' токены.
+    Убирает мусорные символы ('(', ')', '.', ',') и выкидывает пустые/'plate only' токены.
     """
     names = _INGR_RE.findall(ingr_name)
     cleaned = []
@@ -58,7 +55,7 @@ def _dish_hint(ingredients: list) -> str:
     return 'mixed'
 
 class MealDataset(Dataset):
-    def __init__(self, model_config: utils.MealModelConfig, split='train', bow_vectorizer=None):
+    def __init__(self, model_config: utils.MealModelConfig, split='train'):
         super().__init__()
         
         try:
@@ -81,37 +78,6 @@ class MealDataset(Dataset):
         # проверить что значения распределений не отличаются от заданных в конфиге
         if split == 'train': 
             self.verify_mean_std(df)
-
-                # Эксперимент 11: BoW-векторизатор
-        self.bow_matrix = None
-        if model_config.USE_BOW:
-            # токенизируем ТЕМ ЖЕ препроцессингом, что и текст для DistilBERT,
-            # иначе состязание 'spinach (raw)'/'spinach (cooked)', дефисы и проч. дадут
-            # несовпадающие словари train/test (что и давало перекос в vocab).
-            raw_texts = [', '.join(_preprocess_ingredients(s)) for s in df['ingr_name'].values]
-            if split == 'train':
-                # счётчик биграмм: ловит 'green beans', 'bean sprouts', 'peanut butter' и т.п.
-                # как единые признаки. ngram_range=(1, 2) при 196 названиях ингредиентов
-                # даёт словарь порядка 3-4к (max_features лишь верхняя граница).
-                self.bow_vectorizer = CountVectorizer(
-                    ngram_range=(1, 2),
-                    max_features=model_config.BOW_DIM,  # 768
-                )
-                self.bow_matrix = self.bow_vectorizer.fit_transform(raw_texts)
-
-                # РЕАЛЬНАЯ размерность словаря - может быть меньше max_features (BOW_DIM).
-                # Проставляем в config, чтобы MealModelNN построил bow_norm/bow_head по факту.
-                model_config.bow_dim = int(len(self.bow_vectorizer.vocabulary_))
-                print(f'[BoW] train vocab size = {model_config.bow_dim} '
-                      f'(max_features={model_config.BOW_DIM}, ngram_range=(1, 2))')
-            else:
-                assert bow_vectorizer is not None, 'Для val/test передаётся bow_vectorizer, обученный на train'
-                self.bow_vectorizer = bow_vectorizer
-                self.bow_matrix = self.bow_vectorizer.transform(raw_texts)
-        else:
-            self.bow_vectorizer = None
-
-        ##--------
 
         self.img_path = path.Path(model_config.IMAGES_PATH)
 
@@ -214,20 +180,12 @@ class MealDataset(Dataset):
         original_image = Image.open(self.img_path / dish_id / 'rgb.png')
         image = self.img_transforms(image=np.array(original_image))["image"]
 
-                # Эксперимент 11 (bow)
-        bow_vec = None
-        if self.config.USE_BOW:
-            bow_vec = self.bow_matrix[index].toarray().ravel().astype(np.float32) # type: ignore
-        else:
-            bow_vec = np.zeros(self.config.bow_dim, dtype=np.float32)
-
         return {
             'text': hinted_text,
             'image': image,
             'target': target_norm,
             'target_mass': mass_lognorm,
-            'target_kal_100': kal_100_lognorm,
-            'bow': bow_vec,
+            'target_kal_100': kal_100_lognorm
         }
     
 def collate_fn(batch, tokenizer: transformers.BertTokenizer):
@@ -251,7 +209,6 @@ def collate_fn(batch, tokenizer: transformers.BertTokenizer):
     targets = torch.FloatTensor([item['target'] for item in batch])
     target_mass = torch.FloatTensor([item['target_mass'] for item in batch])
     target_kal_100 = torch.FloatTensor([item['target_kal_100'] for item in batch])
-    bow = torch.from_numpy(np.stack([item['bow'] for item in batch]))
 
     tokenized = tokenizer(texts, return_tensors='pt', padding='longest')
 
@@ -261,6 +218,5 @@ def collate_fn(batch, tokenizer: transformers.BertTokenizer):
         'images': images,
         'target': targets,
         'target_mass': target_mass,
-        'target_kal_100': target_kal_100,
-        'bow': bow,
+        'target_kal_100': target_kal_100
     }
