@@ -64,7 +64,7 @@ class MealModelConfig:
 
     # train config
     N_BATCH = 32
-    N_EPOCHS = 30 # 10 for CPU (2.5 hours)
+    N_EPOCHS = 24 # 10 for CPU (2.5 hours)
     PATIENCE = 6 # ранняя остановка обучения, если метрики не растут
     N_ITER = -1 #32 # для отладки, -1 без ограничений
     
@@ -79,14 +79,14 @@ class MealModelConfig:
     WEIGHT_DECAY = 1e-4
 
     # Эксперимент 8 - больше веса ошибки 2-ой головы - по массе (0.3 -> 0.5)
-    LOSS_MASS_WEIGHT = 0.5
+    LOSS_MASS_WEIGHT = 0.4
     
     # Эксперимент 9: вес ошибки k_100 головы (для 3-головой схемы: direct + mass + k100)
     LOSS_K_100_WEIGHT = 0.3
     
     # Эксперимент 9: доля прямого head в финальном предсказании калорийности (ensemble)
     # kal = KAL_DIRECT_WEIGHT * direct + (1 - KAL_DIRECT_WEIGHT) * (k100 * mass / 100)
-    KAL_DIRECT_WEIGHT = 0.5
+    KAL_DIRECT_WEIGHT = 0.65
 
     TARGET_METRIC = 50
 
