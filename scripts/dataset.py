@@ -103,7 +103,7 @@ class MealDataset(Dataset):
         item = self.df.iloc[index]
         dish_id = item['dish_id']
 
-        ing_count = item['ingr_count']
+        ing_count = item['ing_count']
         # парсим текст со списком в реальный список
         text = item['ingr_name']
         text = _INGR_RE.findall(text)
