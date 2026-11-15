@@ -73,6 +73,7 @@ class MealModelConfig:
     LR_FUSION = 1e-4
     LR_REGRESSION_HEAD = 1e-4
 
+    # вес ошибки 2-ой головы - по массе
     LOSS_MASS_WEIGHT = 0.5
 
     TARGET_METRIC = 50
@@ -279,7 +280,7 @@ def train(model: MealModelNN, config: MealModelConfig, optimizer: torch.optim.Ad
 
         # совместный loss для обучения обоих голов, loss_huber_mass как дополнительный, поэтому 0.3
         # experiment-8 - увеличиваем mass_head до 0.5
-        loss = loss_huber_kal_100 + config.LOSS_MASS_WEIGHT *loss_huber_mass
+        loss = loss_huber_kal_100 + config.LOSS_MASS_WEIGHT * loss_huber_mass
         loss.backward()
         
         # clip grad norm
@@ -367,7 +368,7 @@ def validate(model: MealModelNN, config: MealModelConfig, dataloader: DataLoader
             # loss huber
             loss_huber_kal_100 = huber_metric(result_k_100, target_kal_100)
             loss_huber_mass = huber_metric(result_mass, target_mass)
-            loss_huber = loss_huber_kal_100 + 0.5*loss_huber_mass
+            loss_huber = loss_huber_kal_100 + config.LOSS_MASS_WEIGHT * loss_huber_mass
 
             # mae
             mass_real = torch.exp(target_mass * model.config.MASS_LOG_STD + model.config.MASS_LOG_MEAN)
