@@ -9,6 +9,7 @@ from PIL import Image
 import albumentations as A
 import timm
 import transformers
+from sklearn.feature_extraction.text import CountVectorizer
 
 # locals
 import scripts.utils as utils
@@ -39,7 +40,7 @@ def _dish_hint(ingredients: list) -> str:
     return 'mixed'
 
 class MealDataset(Dataset):
-    def __init__(self, model_config: utils.MealModelConfig, split='train', stub_text = False):
+    def __init__(self, model_config: utils.MealModelConfig, split='train', bow_vectorizer=None):
         super().__init__()
         
         try:
@@ -62,7 +63,26 @@ class MealDataset(Dataset):
         # проверить что значения распределений не отличаются от заданных в конфиге
         if split == 'train': 
             self.verify_mean_std(df)
-       
+
+        # Эксперимент 11: BoW-векторизатор
+        self.bow_matrix = None
+        if model_config.USE_BOW:      
+            text = df['ingr_name'].values
+            raw_texts = [', '.join(_INGR_RE.findall(s)) for s in text]
+            if split == 'train':
+                self.bow_vectorizer = CountVectorizer(
+                    max_features=model_config.BOW_DIM, #768 (всего 555 ингредиентов в `ingredients.csv`)                    
+                )
+                self.bow_matrix = self.bow_vectorizer.fit_transform(raw_texts)
+            else:
+                assert bow_vectorizer is not None, 'Для val/test передаётся bow_vectorizer, обученный на train'
+                self.bow_vectorizer = bow_vectorizer
+                self.bow_matrix = self.bow_vectorizer.transform(raw_texts)
+        else:
+            self.bow_vectorizer = None
+
+        ##--------
+
         self.img_path = path.Path(model_config.IMAGES_PATH)
 
         img_model_config = timm.get_pretrained_cfg(model_name=model_config.IMG_MODEL_NAME); assert img_model_config is not None
@@ -165,12 +185,20 @@ class MealDataset(Dataset):
         original_image = Image.open(self.img_path / dish_id / 'rgb.png')
         image = self.img_transforms(image=np.array(original_image))["image"]
 
+        # Эксперимент 11 (bow)
+        bow_vec = None
+        if self.config.USE_BOW:
+            bow_vec = self.bow_matrix[index].toarray().ravel().astype(np.float32) # type: ignore
+        else:
+            bow_vec = np.zeros(self.config.BOW_DIM, dtype=np.float32)
+
         return {
             'text': hinted_text,
             'image': image,
             'target': target_norm,
             'target_mass': mass_lognorm,
-            'target_kal_100': kal_100_lognorm
+            'target_kal_100': kal_100_lognorm,
+            'bow': bow_vec,
         }
     
 def collate_fn(batch, tokenizer: transformers.BertTokenizer):
@@ -194,6 +222,7 @@ def collate_fn(batch, tokenizer: transformers.BertTokenizer):
     targets = torch.FloatTensor([item['target'] for item in batch])
     target_mass = torch.FloatTensor([item['target_mass'] for item in batch])
     target_kal_100 = torch.FloatTensor([item['target_kal_100'] for item in batch])
+    bow = torch.from_numpy(np.stack([item['bow'] for item in batch]))
 
     tokenized = tokenizer(texts, return_tensors='pt', padding='longest')
 
@@ -203,5 +232,6 @@ def collate_fn(batch, tokenizer: transformers.BertTokenizer):
         'images': images,
         'target': targets,
         'target_mass': target_mass,
-        'target_kal_100': target_kal_100
+        'target_kal_100': target_kal_100,
+        'bow': bow,
     }
