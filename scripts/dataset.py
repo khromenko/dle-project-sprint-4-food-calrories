@@ -103,6 +103,7 @@ class MealDataset(Dataset):
         item = self.df.iloc[index]
         dish_id = item['dish_id']
 
+        ing_count = item['ingr_count']
         # парсим текст со списком в реальный список
         text = item['ingr_name']
         text = _INGR_RE.findall(text)
@@ -126,7 +127,7 @@ class MealDataset(Dataset):
         image = self.img_transforms(image=np.array(original_image))["image"]
         
         return {
-            'text': ", ".join(text),
+            'text': f"ingredients: {ing_count}. " + ", ".join(text),
             'image': image,
             'target': target_norm,
             'target_mass': mass_lognorm,

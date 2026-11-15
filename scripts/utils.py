@@ -51,7 +51,7 @@ class MealModelConfig:
     TEXT_MODEL_UNFREEZE = "transformer.layer.5" # выбрать последние 1-2 слоя при необходимости
 
     IMG_MODEL_NAME = 'mobilenetv4_conv_aa_large' #.e230_r448_in12k_ft_in1k'
-    IMG_MODEL_UNFREEZE = "blocks.2|blocks.4|conv_head|norm_head" # выбрать последние 1-2 слоя при необходимости
+    IMG_MODEL_UNFREEZE = "blocks.4|conv_head|norm_head" # выбрать последние 1-2 слоя при необходимости
 
     IMG_MODEL_FEATURE_DIM = 1280 # img_model.num_features lies telling it is 960
     COMMON_FEATURES_DIM = 256
@@ -68,11 +68,12 @@ class MealModelConfig:
     
     # optimizer
     LR_TEXT_MODEL = 1e-5
-    LR_IMG_MODEL_BLOCK2 = 5e-6
     LR_IMG_MODEL = 1e-5
     LR_PROJ = 1e-4
     LR_FUSION = 1e-4
     LR_REGRESSION_HEAD = 1e-4
+
+    LOSS_MASS_WEIGHT = 0.5
 
     TARGET_METRIC = 50
 
@@ -277,7 +278,8 @@ def train(model: MealModelNN, config: MealModelConfig, optimizer: torch.optim.Ad
         loss_huber_mass = huber_metric(result_mass, target_mass)
 
         # совместный loss для обучения обоих голов, loss_huber_mass как дополнительный, поэтому 0.3
-        loss = loss_huber_kal_100 + 0.3*loss_huber_mass
+        # experiment-8 - увеличиваем mass_head до 0.5
+        loss = loss_huber_kal_100 + config.LOSS_MASS_WEIGHT *loss_huber_mass
         loss.backward()
         
         # clip grad norm
@@ -365,7 +367,7 @@ def validate(model: MealModelNN, config: MealModelConfig, dataloader: DataLoader
             # loss huber
             loss_huber_kal_100 = huber_metric(result_k_100, target_kal_100)
             loss_huber_mass = huber_metric(result_mass, target_mass)
-            loss_huber = loss_huber_kal_100 + 0.3*loss_huber_mass
+            loss_huber = loss_huber_kal_100 + 0.5*loss_huber_mass
 
             # mae
             mass_real = torch.exp(target_mass * model.config.MASS_LOG_STD + model.config.MASS_LOG_MEAN)
