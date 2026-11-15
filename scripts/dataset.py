@@ -13,10 +13,33 @@ import transformers
 # locals
 import scripts.utils as utils
 
+# парсинг списка в виде строки (так хранится в csv) в реальный список
 _INGR_RE = re.compile(r"""['"]([^'"]*)['"]""")
 
+# Эксперимент 9 - подсказка о типе блюда по ключевым ингредиентам.
+# также как префикс с количеством блюд (ing_count), 
+# который помогает DistilBERT'у выявлять калорийные блюда
+_HINT_RULES = [
+    ('high-water',  ('water', 'juice', 'soup', 'broth', 'melon', 'watermelon',
+                     'cucumber', 'lettuce', 'celery', 'ice', 'milk')),
+    ('high-fat',    ('oil', 'butter', 'cream', 'cheese', 'bacon', 'mayonnaise',
+                     'fried', 'almond', 'nut', 'peanut', 'avocado')),
+    ('high-carb',   ('rice', 'pasta', 'bread', 'potato', 'flour', 'sugar',
+                     'honey', 'tortilla', 'noodle')),
+    ('protein',     ('chicken', 'beef', 'pork', 'fish', 'salmon', 'tuna',
+                     'egg', 'turkey', 'shrimp')),
+]
+
+def _dish_hint(ingredients: list) -> str:
+    """Определяет грубый тип блюда по списку ингредиентов (по приоритету правил)."""
+    joined = ' '.join(ingredients).lower()
+    for hint, keywords in _HINT_RULES:
+        if any(kw in joined for kw in keywords):
+            return hint
+    return 'mixed'
+
 class MealDataset(Dataset):
-    def __init__(self, model_config: utils.MealModelConfig, split='train'):
+    def __init__(self, model_config: utils.MealModelConfig, split='train', stub_text = False):
         super().__init__()
         
         try:
@@ -24,23 +47,21 @@ class MealDataset(Dataset):
             # убираем блюда с нулевой калорийностью - это просто пустая тарелка да еще и с ошибкой в массе в датасете
             # для расчета логарифмического масштаба 0 - это запрещенное значение, и в целом для модели это не нужно.
             df = df[(df['split'] == split) & (df['total_calories'] > 0)]
+
+            # заглушаем текстовую составляющую для проверки только визуальной модели
+            if model_config.STUB_TEXT:
+                df['ingr_name'] = "['stub_text']"
+
         except Exception as e:
             print(f'Error reading dataset from: {model_config.DATASET_PATH}, exc = {e}')
             raise RuntimeError(e)
                 
         self.df = df
         self.config = model_config
-        
-        # проверить что значения не отличаются
-        if split == 'train':
-            print(f'expected TARGET_MEAN = {model_config.TARGET_MEAN}, real data =  {df["total_calories"].mean():.2f}')
-            print(f'expected TARGET_STD  = {model_config.TARGET_STD}, real data = {df["total_calories"].std():.2f}')           
 
-            _m = np.log(df['total_mass'])
-            print(f'expected MASS_LOG  = ({model_config.MASS_LOG_MEAN}, {model_config.MASS_LOG_STD}), real = ({_m.mean():.4f}, {_m.std():.4f})')
-            _k = df.apply(lambda r: r['total_calories']/r['total_mass']*100, axis=1)
-            _k = np.log(_k[_k>0])
-            print(f'expected K100_LOG  = ({model_config.K_100_LOG_MEAN}, {model_config.K_100_LOG_STD}), real = ({_k.mean():.4f}, {_k.std():.4f})')
+        # проверить что значения распределений не отличаются от заданных в конфиге
+        if split == 'train': 
+            self.verify_mean_std(df)
        
         self.img_path = path.Path(model_config.IMAGES_PATH)
 
@@ -59,17 +80,15 @@ class MealDataset(Dataset):
         ]
         
         # аугментации для train - расширяем датасет
-        aug_transforms = []
-        if split == 'train':
-            aug_transforms = [
-                A.Affine(scale=(0.8, 1.2), rotate=(-15, 15), translate_percent=(-0.1, 0.1),
-                         shear=(-10, 10), fill=0, p=0.5),
-                A.CoarseDropout(num_holes_range=(2, 8),
-                                hole_height_range=(int(0.07 * img_size), int(0.15 * img_size)),
-                                hole_width_range=(int(0.1 * img_size), int(0.15 * img_size)),
-                                fill=0, p=0.5),
-                A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05, p=0.5),
-            ]
+        aug_transforms = [
+            A.Affine(scale=(0.8, 1.2), rotate=(-15, 15), translate_percent=(-0.1, 0.1),
+                        shear=(-10, 10), fill=0, p=0.5),
+            A.CoarseDropout(num_holes_range=(2, 8),
+                            hole_height_range=(int(0.07 * img_size), int(0.15 * img_size)),
+                            hole_width_range=(int(0.1 * img_size), int(0.15 * img_size)),
+                            fill=0, p=0.5),
+            A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05, p=0.5),
+        ]
         
         post_transforms = [
             A.Normalize(mean=img_model_config.mean, std=img_model_config.std),
@@ -79,7 +98,21 @@ class MealDataset(Dataset):
         if split == 'train':
             self.img_transforms = A.Compose(base_transforms_train + aug_transforms + post_transforms)
         else:
-            self.img_transforms = A.Compose(base_transforms_val + aug_transforms + post_transforms)     
+            self.img_transforms = A.Compose(base_transforms_val + post_transforms) 
+
+    def verify_mean_std(self, df):
+        """
+        Визуальная проверка, что значения распределений не отличаются от заданных в конфиге
+        """
+        print(f'expected TARGET_MEAN = {self.config.TARGET_MEAN}, real data =  {df["total_calories"].mean():.2f}')
+        print(f'expected TARGET_STD  = {self.config.TARGET_STD}, real data = {df["total_calories"].std():.2f}')           
+
+        _m = np.log(df['total_mass'])
+        print(f'expected MASS_LOG  = ({self.config.MASS_LOG_MEAN}, {self.config.MASS_LOG_STD}), real = ({_m.mean():.4f}, {_m.std():.4f})')
+        
+        _k = df.apply(lambda r: r['total_calories']/r['total_mass']*100, axis=1)
+        _k = np.log(_k[_k>0])
+        print(f'expected K100_LOG  = ({self.config.K_100_LOG_MEAN}, {self.config.K_100_LOG_STD}), real = ({_k.mean():.4f}, {_k.std():.4f})')    
 
     def __len__(self):
         return len(self.df)
@@ -103,11 +136,17 @@ class MealDataset(Dataset):
         item = self.df.iloc[index]
         dish_id = item['dish_id']
 
-        ing_count = item['ing_count']
         # парсим текст со списком в реальный список
         text = item['ingr_name']
         text = _INGR_RE.findall(text)
-        
+
+        # Эксперимент 9: добавляем текстовые подсказки о БЖУ:
+        # - количество ингредиентов 
+        # - о типе блюда (жиры, углеводы и проч.)
+        hint_count = item['ing_count']
+        hint_bju = _dish_hint(text)
+        hinted_text = f"ingredients: {hint_count}. type: {hint_bju}. " + ", ".join(text)
+
         # target - norm
         target = item['total_calories']        
         target_norm = (target - self.config.TARGET_MEAN)/self.config.TARGET_STD
@@ -125,9 +164,9 @@ class MealDataset(Dataset):
         # image + transform
         original_image = Image.open(self.img_path / dish_id / 'rgb.png')
         image = self.img_transforms(image=np.array(original_image))["image"]
-        
+
         return {
-            'text': f"ingredients: {ing_count}. " + ", ".join(text),
+            'text': hinted_text,
             'image': image,
             'target': target_norm,
             'target_mass': mass_lognorm,
@@ -147,9 +186,7 @@ def collate_fn(batch, tokenizer: transformers.BertTokenizer):
             - target - целевые значения калорийности блюда
             
             - target_mass - масса блюда (как дополнительный таргет)
-            - target_kal_100 - калорий на 100г (как дополнительный таргет)
-
-    
+            - target_kal_100 - калорий на 100г (как дополнительный таргет)    
     """
 
     texts = [item['text'] for item in batch]
