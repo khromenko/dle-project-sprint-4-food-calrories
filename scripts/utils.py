@@ -471,7 +471,7 @@ def validate(model: MealModelNN, config: MealModelConfig, dataloader: DataLoader
             running_mae += kal_mae.item()
             running_kal_100_mae += kal_100_mae.item()
             running_mass_mae += mass_mae.item()
-            running_direct_mae += kal_direct_mae / i
+            running_direct_mae += kal_direct_mae.item()
 
         if i == config.N_ITER:
             log(f'debug early stop - i = {i}')
