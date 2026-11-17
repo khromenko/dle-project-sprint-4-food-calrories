@@ -1,3 +1,4 @@
+import matplotlib.pyplot as plt
 import os, re, random
 import pathlib as path
 import numpy as np
@@ -512,5 +513,61 @@ def save_model(model: MealModelNN, config: MealModelConfig):
     save_path.mkdir(exist_ok=True)
     file_path = save_path / config.MODEL_SAVE_NAME
     
-    print(f'model saved to - [{file_path}]')
+    print(f'model saving to - [{file_path}]')
     torch.save(model.state_dict(), file_path)
+def save_checkpoint(model: MealModelNN, config: MealModelConfig, optimizer: torch.optim.AdamW, scheduler: torch.optim.lr_scheduler.LambdaLR, current_epoch, best_epoch, best_metric):
+    """
+    Сохранение checkpoint обучения
+    """
+
+    save_path = path.Path(config.MODEL_SAVE_PATH)
+    save_path.mkdir(exist_ok=True)
+    file_path = save_path / config.MODEL_SAVE_NAME
+    
+    print(f'checkpoint saving to - [{file_path}]')
+    
+    checkpoint = {
+        'model': model.state_dict(),
+        'optimizer': optimizer.state_dict(),
+        'scheduler': scheduler.state_dict(),
+        'epoch': current_epoch,
+        'best_epoch': best_epoch,
+        'best_metric': best_metric
+    }
+    torch.save(checkpoint, file_path)    
+
+def restore_checkpoint(model: MealModelNN, config: MealModelConfig, optimizer: torch.optim.AdamW, scheduler: torch.optim.lr_scheduler.LambdaLR):
+    model_path = path.Path(config.MODEL_SAVE_PATH) / config.MODEL_SAVE_NAME
+    ckpt = torch.load(model_path, weights_only=False)
+
+    model.load_state_dict(ckpt['model'])
+    optimizer.load_state_dict(ckpt['optimizer'])
+    scheduler.load_state_dict(ckpt['scheduler'])
+    start_epoch   = ckpt.get('epoch', 0) + 1
+    best_metric   = ckpt.get('best_metric', 1000)
+    best_epoch    = ckpt.get('best_epoch', -1)
+
+    return start_epoch, best_epoch, best_metric
+
+
+def plof_train_log(train_loss_history, val_loss_history, train_mae_history, val_mae_history, train_time_history, val_time_history):
+    fix, axs = plt.subplots(1,3, figsize=(12,5))
+    ax=axs[0]
+    ax.plot(train_loss_history)
+    ax.plot(val_loss_history)
+    ax.grid();ax.set_xlabel('epoch');ax.set_ylabel('Huber loss');ax.legend(['train_loss', 'val_loss'])
+    ax.set_title('Loss')
+
+    ax=axs[1]
+    ax.plot(train_mae_history)
+    ax.plot(val_mae_history)
+    ax.grid();ax.set_xlabel('epoch');ax.set_ylabel('MAE');ax.legend(['train_mae', 'val_mae'])
+    ax.set_title('MAE')
+
+    ax=axs[2]
+    ax.plot(train_time_history)
+    ax.plot(val_time_history)
+    ax.grid();ax.set_xlabel('epoch');ax.set_ylabel('time, s');l=ax.legend(['train_time', 'val_time'])
+    ax.set_title('Time')
+
+    plt.tight_layout()
