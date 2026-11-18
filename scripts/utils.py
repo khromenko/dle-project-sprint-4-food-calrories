@@ -13,6 +13,7 @@ from time import time, perf_counter
 
 # local
 import scripts.models as models
+import scripts.config as config
 
 def set_random(seed=43):
     random.seed(seed)
@@ -22,11 +23,11 @@ def set_random(seed=43):
     torch.cuda.manual_seed(seed)
     torch.backends.cudnn.benchmark = True
 
-def log_fn(debug_msg: str, config: models.MealModelConfig):
+def log_fn(debug_msg: str, config: config.MealModelConfig):
     if config and config.DEBUG:
         print(debug_msg)
 
-def unfreeze_model_params(model: models.MealModelNN, config: models.MealModelConfig):
+def unfreeze_model_params(model: models.MealModelNN, config: config.MealModelConfig):
     """
     Размораживает слои модели для обучения согласно их названияем из конфга
     """
@@ -84,7 +85,7 @@ def huber_metric(pred: torch.Tensor, real: torch.Tensor, delta=1.0):
     """
     return nn.functional.huber_loss(pred, real, reduction='mean', delta=delta)
 
-def train(model: models.MealModelNN, config: models.MealModelConfig, optimizer: torch.optim.AdamW, dataloader: DataLoader, scheduler = None):
+def train(model: models.MealModelNN, config: config.MealModelConfig, optimizer: torch.optim.AdamW, dataloader: DataLoader, scheduler = None):
     log = partial(log_fn, config=config)
     log('   --- train()')
     
@@ -196,7 +197,7 @@ def train(model: models.MealModelNN, config: models.MealModelConfig, optimizer: 
 
     return train_huber_loss, train_mae_loss, train_metric_kal_100_mae, train_metric_mass_mae, train_metric_direct_mae, perf_counter() - start
 
-def validate(model: models.MealModelNN, config: models.MealModelConfig, dataloader: DataLoader):
+def validate(model: models.MealModelNN, config: config.MealModelConfig, dataloader: DataLoader):
     log = partial(log_fn, config=config)
     log('   -- validate()')
 
@@ -293,7 +294,7 @@ def validate(model: models.MealModelNN, config: models.MealModelConfig, dataload
 
     return val_loss_huber, val_metric_mae, val_metric_kal_100_mae, val_metric_mass_mae, val_metric_direct_mae, perf_counter() - start
 
-def save_model(model: models.MealModelNN, config: models.MealModelConfig):
+def save_model(model: models.MealModelNN, config: config.MealModelConfig):
     """
     Сохранение весов модели (checkpoint)
     """
@@ -303,7 +304,7 @@ def save_model(model: models.MealModelNN, config: models.MealModelConfig):
     
     print(f'model saving to - [{file_path}]')
     torch.save(model.state_dict(), file_path)
-def save_checkpoint(model: models.MealModelNN, config: models.MealModelConfig, optimizer: torch.optim.AdamW, scheduler: torch.optim.lr_scheduler.LambdaLR, current_epoch, best_epoch, best_metric):
+def save_checkpoint(model: models.MealModelNN, config: config.MealModelConfig, optimizer: torch.optim.AdamW, scheduler: torch.optim.lr_scheduler.LambdaLR, current_epoch, best_epoch, best_metric):
     """
     Сохранение checkpoint обучения
     """
@@ -324,7 +325,7 @@ def save_checkpoint(model: models.MealModelNN, config: models.MealModelConfig, o
     }
     torch.save(checkpoint, file_path)    
 
-def restore_checkpoint(model: models.MealModelNN, config: models.MealModelConfig, optimizer: torch.optim.AdamW, scheduler: torch.optim.lr_scheduler.LambdaLR):
+def restore_checkpoint(model: models.MealModelNN, config: config.MealModelConfig, optimizer: torch.optim.AdamW, scheduler: torch.optim.lr_scheduler.LambdaLR):
     model_path = path.Path(config.MODEL_SAVE_PATH) / config.MODEL_SAVE_NAME
     ckpt = torch.load(model_path, weights_only=False)
 
