@@ -12,7 +12,7 @@ import transformers
 import scipy.sparse as sparse
 
 # locals
-import scripts.models as models
+import scripts.config as config
 
 # парсинг списка в виде строки (так хранится в csv) в реальный список
 _INGR_RE = re.compile(r"""['"]([^'"]*)['"]""")
@@ -119,7 +119,7 @@ def _make_dish2cal_reference_vector(dish_ingredients: str|list, ingr2kal_matrix:
 
 
 class MealDataset(Dataset):
-    def __init__(self, model_config: models.MealModelConfig, split='train', ingr2kal_ref_matrix: sparse.csr_matrix = None, ingr_encoder: dict = None): # type: ignore
+    def __init__(self, model_config: config.MealModelConfig, split='train', ingr2kal_ref_matrix: sparse.csr_matrix = None, ingr_encoder: dict = None): # type: ignore
         super().__init__()
         
         try:
@@ -250,7 +250,8 @@ class MealDataset(Dataset):
         # - о типе блюда (жиры, углеводы и проч.)
         hint_count = int(item['ing_count'])
         hint_bju = _dish_hint(text)
-        hinted_text = f"ingredients: {hint_count}. type: {hint_bju}. " + ", ".join(text)
+        hint_mass = int(item['total_mass'])
+        hinted_text = f"mass: {hint_mass}. ingredients: {hint_count}. type: {hint_bju}. " + ", ".join(text)
 
         # target - norm
         target = item['total_calories']        
