@@ -40,22 +40,32 @@ def _preprocess_ingredients(ingr_name: str) -> list:
     names = _INGR_RE.findall(ingr_name)
     cleaned = []
     for n in names:
-        n = n.replace('(', ' ').replace(')', ' ')
-        n = re.sub(r'[.,;]', ' ', n)
-        n = re.sub(r'\s+', ' ', n).strip().lower()
-        if n and n != 'plate only':
-            cleaned.append(n)
+        cleaned.append(_clean_ingr_name(n))
     return cleaned
 
+def _clean_ingr_name(ingr: str):
+    """
+    Убирает лишние символы ('(', ')', '.', ',')
+    """
+
+    ingr_clean = ingr.replace('(', ' ').replace(')', ' ') 
+    ingr_clean = re.sub(r'[.,;]', ' ', ingr_clean)
+    ingr_clean = re.sub(r'\s+', ' ', ingr_clean).strip().lower()
+    
+    return ingr_clean
+
 def _dish_hint(ingredients: list) -> str:
-    """Определяет грубый тип блюда по списку ингредиентов (по приоритету правил)."""
+    """
+    Определяет грубый тип блюда по списку ингредиентов (по приоритету правил).
+    """
+
     joined = ' '.join(ingredients).lower()
     for hint, keywords in _HINT_RULES:
         if any(kw in joined for kw in keywords):
             return hint
     return 'mixed'
 
-def make_ingr2cal_matrix(ingr_cal_mapping_df: pd.DataFrame):
+def _make_ingr2cal_matrix(ingr_cal_mapping_df: pd.DataFrame):
     """
     Создает квадратную диагональную csr-матрицу калорийности ингредиентов:
     - строка и столбцы - соответсвует train-ингредиентам
@@ -69,17 +79,15 @@ def make_ingr2cal_matrix(ingr_cal_mapping_df: pd.DataFrame):
             - ingr_encoder: кодировщик ингредиентов для поиска ингредиента по индексу в матрице
     """
     # read cal data for ingredients from provided mapping
-    ingr_cal_mapping = ingr_cal_mapping_df[['food_ingr', 'energy_kcal']].to_numpy()
+    ingr_cal_mapping = ingr_cal_mapping_df[['food_ingr', 'energy_kcal']]
     
-    print('Ingredients kal mapping:', ingr_cal_mapping.shape)
-    print('top 10 records:', ingr_cal_mapping[0:10])
-    print('------')
+    print('Ref ingredients kal mapping:', ingr_cal_mapping.shape)
 
     # create encoder for ingredients to make positional index search
-    ingr_encoder = {row[0]: i  for i, row in enumerate(ingr_cal_mapping)}
+    ingr_encoder = {_clean_ingr_name(ingr): i  for i, ingr in enumerate(ingr_cal_mapping['food_ingr'])}
 
     # make csr-matrix - square matrix with diagonal items
-    kal_data = ingr_cal_mapping[:,1]    
+    kal_data = ingr_cal_mapping['energy_kcal'].values
     ingr2kal_matrix = sparse.csr_matrix(
         (kal_data, (list(ingr_encoder.values()), list(ingr_encoder.values()))),
         dtype=int
@@ -87,7 +95,7 @@ def make_ingr2cal_matrix(ingr_cal_mapping_df: pd.DataFrame):
 
     return ingr2kal_matrix, ingr_encoder
         
-def make_dish2cal_reference_vector(dish_ingredients: str|list, ingr2kal_matrix: sparse.csr_matrix, ingr_encoder: dict):
+def _make_dish2cal_reference_vector(dish_ingredients: str|list, ingr2kal_matrix: sparse.csr_matrix, ingr_encoder: dict):
     """
     Создает (разреженный) вектор калорийности блюда размером (1, N_ingr):
     - N_ingr - количество ингредиентов (фиксируется train-датасетом)
@@ -106,7 +114,7 @@ def make_dish2cal_reference_vector(dish_ingredients: str|list, ingr2kal_matrix: 
     ingr_ids = [ingr_encoder[ingr] for ingr in dish_ingredients]
         
     kal_vector = ingr2kal_matrix[ingr_ids].sum(axis=0)
-    return kal_vector
+    return np.array(kal_vector).flatten()
 
 
 
@@ -141,12 +149,14 @@ class MealDataset(Dataset):
 
         if split == 'train': 
             # Эксперимент 2.1 - матрица калорийности и кодировщик ингридиентов
-            self.ingr2kal_ref_matrix, self.ingr_encoder = make_ingr2cal_matrix(ref_kal_mapping_df)
+            self.ingr2kal_ref_matrix, self.ingr_encoder = _make_ingr2cal_matrix(ref_kal_mapping_df)
 
             # проверить что значения распределений не отличаются от заданных в конфиге
             self.verify_mean_std(df, ref_kal_mapping_df)
         else:
             # на test передать готовые объекты после train
+            assert (ingr2kal_ref_matrix is not None) and (ingr_encoder is not None), 'ref_kal_mapping_df and ingr_encoder must be provided if not train split'
+                        
             self.ingr2kal_ref_matrix, self.ingr_encoder = ingr2kal_ref_matrix, ingr_encoder
 
         # images
@@ -233,12 +243,12 @@ class MealDataset(Dataset):
         text = _preprocess_ingredients(item['ingr_name'])
         
         # # Эксперимент 2.1 - формируем вектор калорийности ингредиентов блюда по справочнику
-        kal_ref_vector = make_dish2cal_reference_vector(text, self.ingr2kal_ref_matrix, self.ingr_encoder)
+        ref_k100 = _make_dish2cal_reference_vector(text, self.ingr2kal_ref_matrix, self.ingr_encoder)
 
         # Эксперимент 9: добавляем текстовые подсказки о БЖУ:
         # - количество ингредиентов 
         # - о типе блюда (жиры, углеводы и проч.)
-        hint_count = item['ing_count']
+        hint_count = int(item['ing_count'])
         hint_bju = _dish_hint(text)
         hinted_text = f"ingredients: {hint_count}. type: {hint_bju}. " + ", ".join(text)
 
@@ -263,7 +273,7 @@ class MealDataset(Dataset):
         return {
             'text': hinted_text,
             'image': image,
-            'kal_ref_vector': kal_ref_vector,
+            'ref_k100': ref_k100,
             'target': target_norm,
             'target_mass': mass_lognorm,
             'target_kal_100': kal_100_lognorm
@@ -290,7 +300,7 @@ def collate_fn(batch, tokenizer: transformers.BertTokenizer):
 
     texts = [item['text'] for item in batch]
     images = torch.stack([item['image'] for item in batch])
-    kal_ref_vector = torch.stack([item['kal_ref_vector'] for item in batch])
+    ref_k100 = torch.FloatTensor(np.array([item['ref_k100'] for item in batch]))
 
     targets = torch.FloatTensor([item['target'] for item in batch])
     target_mass = torch.FloatTensor([item['target_mass'] for item in batch])
@@ -302,7 +312,7 @@ def collate_fn(batch, tokenizer: transformers.BertTokenizer):
         'input_ids': tokenized['input_ids'],
         'attention_mask': tokenized['attention_mask'],
         'images': images,
-        'kal_ref_vector': kal_ref_vector,
+        'ref_k100': ref_k100,
         
         'target': targets,
         'target_mass': target_mass,

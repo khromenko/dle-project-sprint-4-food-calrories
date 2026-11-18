@@ -108,6 +108,8 @@ def train(model: models.MealModelNN, config: models.MealModelConfig, optimizer: 
         input_ids = data['input_ids'].to(device)
         attention_mask = data['attention_mask'].to(device)
         images = data['images'].to(device)
+        ref_k100 = data['ref_k100'].to(device)
+        
         target = data['target'].to(device)
         target_kal_100 = data['target_kal_100'].to(device)
         target_mass = data['target_mass'].to(device)
@@ -115,7 +117,7 @@ def train(model: models.MealModelNN, config: models.MealModelConfig, optimizer: 
         optimizer.zero_grad()
 
         # forward возвращает 5 значений: ensemble, direct, product, k100, mass
-        result_kal, result_kal_direct, result_kal_product, result_k_100, result_mass = model(input_ids, attention_mask, images)
+        result_kal, result_kal_direct, result_kal_product, result_k_100, result_mass = model(input_ids, attention_mask, images, ref_k100)
                 
         # loss составной: прямой kal (вес 1.0) + mass + k100
         # Эксперимент 12 - delta = 0.5 (default = 1)
@@ -214,13 +216,14 @@ def validate(model: models.MealModelNN, config: models.MealModelConfig, dataload
         input_ids = data['input_ids'].to(device)
         attention_mask = data['attention_mask'].to(device)
         images = data['images'].to(device)
+        ref_k100 = data['ref_k100'].to(device)
         target = data['target'].to(device)
         target_kal_100 = data['target_kal_100'].to(device)
         target_mass = data['target_mass'].to(device)
 
         with torch.no_grad():        
             # forward возвращает 5 значений: ensemble, direct, product, k100, mass
-            result_kal, result_kal_direct, result_kal_product, result_k_100, result_mass = model(input_ids, attention_mask, images)
+            result_kal, result_kal_direct, result_kal_product, result_k_100, result_mass = model(input_ids, attention_mask, images, ref_k100)
 
             # loss huber (direct + mass + k100)
             # Эксперимент 12 - delta = 0.5 (default = 1)

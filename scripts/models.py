@@ -78,10 +78,10 @@ class MealModelConfig:
     DROPOUT_FUSION = 0.3
 
     # train config
-    N_BATCH = 32
-    N_EPOCHS = 30 # 10 for CPU (2.5 hours)
+    N_BATCH = 32 #32
+    N_EPOCHS = 10 #30 # 10 for CPU (2.5 hours)
     PATIENCE = 6 # ранняя остановка обучения, если метрики не растут
-    N_ITER = -1 #32 # для отладки, -1 без ограничений
+    N_ITER = 30 #-1 #32 # для отладки, -1 без ограничений
     
     # optimizer
     LR_TEXT_MODEL = 1e-5
@@ -110,10 +110,9 @@ class MealModelConfig:
     KAL_DIRECT_WEIGHT = 0.5
 
     # Эксперимент 12 - снижаем с 1.0 до 0.5 для kal_direct - чтобы большие ошибки меньше оттягивали на себя (ушли из MSE зоны)
-    HUBER_DELTA_KAL_DIRECT = 0.5 # 0.5 * TARGET_STD ≈ 110 kcal — порог MSE/L1 для калорий
+    #HUBER_DELTA_KAL_DIRECT = 0.5 # 0.5 * TARGET_STD ≈ 110 kcal — порог MSE/L1 для калорий
     # Эксперимент 13 - возврат к 1 как в Эксперимент 9
     HUBER_DELTA_KAL_DIRECT = 1.0
-
 
     TARGET_METRIC = 50
 
@@ -150,7 +149,10 @@ class MealModelNN(nn.Module):
         self.ref_k100_proj = nn.Linear(in_features=self.config.INGR_DIM, out_features=config.COMMON_FEATURES_DIM) # type: ignore
 
         # слой нормализации для проекций признаков + dropout
-        self.norm_layer = nn.LayerNorm(config.COMMON_FEATURES_DIM)
+        self.norm_text = nn.LayerNorm(config.COMMON_FEATURES_DIM)
+        self.norm_img = nn.LayerNorm(config.COMMON_FEATURES_DIM)
+        self.norm_ref_k100 = nn.LayerNorm(config.COMMON_FEATURES_DIM)
+
         self.dropout = nn.Dropout(config.DROPOUT_FEATURES)
 
         # объединение признаков разных модальностей 
@@ -178,6 +180,37 @@ class MealModelNN(nn.Module):
         #   - учится по target как в Эксп.4 до разделения на 2 головы - устраняет накопление/рассинхронизацию ошибок двух голов
         #   - выход через произведение k100 * mass - оставлен как дополнительный  
         self.regression_head_kal = nn.Linear(in_features=config.COMMON_FEATURES_DIM, out_features=config.REGRESSION_HEAD_DIM) 
+
+        # Инициализируем только новые слои, не трогая backbone-модели
+        self._init_custom_weights()
+
+    def _init_custom_weights(self):
+        # 1. Проекции модальностей и блок слияния (Xavier Uniform хорошо подходит под LayerNorm + GELU)
+        custom_modules = [
+            self.text_proj, 
+            self.img_proj, 
+            self.ref_k100_proj, 
+            self.fusion
+        ]
+        for module in custom_modules:
+            for m in module.modules():
+                if isinstance(m, nn.Linear):
+                    nn.init.xavier_uniform_(m.weight)
+                    if m.bias is not None:
+                        nn.init.zeros_(m.bias)
+
+        # 2. Регрессионные головы: делаем начальные веса очень маленькими.
+        # Так как таргеты нормализованы (mean=0), старт с предсказаний около нуля
+        # предотвратит скачки значений после операции torch.exp() на первых батчах.
+        heads = [
+            self.regression_head_k_100,
+            self.regression_head_mass,
+            self.regression_head_kal
+        ]
+        for head in heads:
+            nn.init.normal_(head.weight, mean=0.0, std=0.01)
+            if head.bias is not None:
+                nn.init.zeros_(head.bias)
 
     def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor, images: torch.Tensor, ref_k100: torch.Tensor): # type: ignore
         """
@@ -216,10 +249,10 @@ class MealModelNN(nn.Module):
         ref_k100_proj = self.ref_k100_proj(ref_k100)
                 
         # 4 - normalization + dropout
-        text_proj = self.dropout(self.norm_layer(text_proj))
-        img_proj = self.dropout(self.norm_layer(img_proj))
-        ref_k100_proj = self.dropout(self.norm_layer(ref_k100_proj))
-        
+        text_proj = self.dropout(self.norm_text(text_proj))
+        img_proj = self.dropout(self.norm_img(img_proj))
+        ref_k100_proj = self.dropout(self.norm_ref_k100(ref_k100_proj))
+       
         # 5 - fusion
         if self.config.STUB_TEXT:
             # stub test with images twice to keep settings unchanged
