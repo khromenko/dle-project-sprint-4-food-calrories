@@ -6,6 +6,9 @@ class MealModelConfig:
     DATASET_PATH = DATASET_PATH_NO_OUTLIERS
     DATASET_IMAGES_PATH = 'data/images'
     
+    # подготовленные текстовые эмбеддинги ингредиентов и кодирощик name-id
+    TEXT_EMBED_PATH = 'data/preprocess/text_emb.pt'
+
     # внешний справочник калорийности продуктов
     DATASET_EXT_KAL_MAPPING = 'data/nutrients/processed/ingr_nutr_mapping_result.csv'
 
@@ -38,11 +41,12 @@ class MealModelConfig:
 
     # models config
     TEXT_MODEL_NAME = 'distilbert-base-uncased'
-    TEXT_MODEL_UNFREEZE = "transformer.layer.5" # выбрать последние 1-2 слоя при необходимости
-    #TEXT_MODEL_UNFREEZE = "" # to stub text
+    TEXT_MODEL_UNFREEZE = "" # выбрать последние 1-2 слоя при необходимости
+    #TEXT_MODEL_UNFREEZE = "transformer.layer.5" 
 
     IMG_MODEL_NAME = 'mobilenetv4_conv_aa_large' #.e230_r448_in12k_ft_in1k'
-    IMG_MODEL_UNFREEZE = "blocks.4|conv_head|norm_head" # выбрать последние 1-2 слоя при необходимости
+    #IMG_MODEL_UNFREEZE = "" # выбрать последние 1-2 слоя при необходимости
+    IMG_MODEL_UNFREEZE = "blocks.4|conv_head|norm_head" #
 
     IMG_MODEL_FEATURE_DIM = 1280 # img_model.num_features lies telling it is 960
     COMMON_FEATURES_DIM = 256
@@ -54,10 +58,10 @@ class MealModelConfig:
     DROPOUT_FUSION = 0.3
 
     # train config
-    N_BATCH = 32 #32
-    N_EPOCHS = 10 #30 # 10 for CPU (2.5 hours)
+    N_BATCH = 32
+    N_EPOCHS = 30 #30 # 10 for CPU (2.5 hours)
     PATIENCE = 6 # ранняя остановка обучения, если метрики не растут
-    N_ITER = 30 #-1 #32 # для отладки, -1 без ограничений
+    N_ITER = -1 #32 # для отладки, -1 без ограничений
     
     # optimizer
     LR_TEXT_MODEL = 1e-5
