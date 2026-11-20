@@ -4,7 +4,7 @@ from transformers import AutoTokenizer, AutoModel, DistilBertTokenizer, DistilBe
 import torch, torch.nn as nn
 
 # locals
-import scripts.config as config
+import scripts.v2_attention.config as config
 import scripts.v2_attention.text_utils as text_utils
 
 def make_ingr_embeddings(tokenizer: DistilBertTokenizer, text_model: DistilBertModel, dataset_path: str):
@@ -36,16 +36,21 @@ def make_ingr_embeddings(tokenizer: DistilBertTokenizer, text_model: DistilBertM
     ingr_encoder = {'<PAD>': 0 }
     ingr_encoder.update({str(ingr): (i+1)  for i, ingr in enumerate(ingrs)})
     
-    print('ingr_encoder:', [item for i, item in enumerate(ingr_encoder.items()) if i < 5])
+    print('ingr_encoder: len =', len(ingr_encoder), [item for i, item in enumerate(ingr_encoder.items()) if i < 5])
 
-    text_embs_list = []
+    text_embs_list = [torch.zeros(size=[text_model.config.hidden_size], dtype=torch.float32)]
     for ingr in ingrs:
         text = f"food ingredient: {ingr}"
         token_out = tokenizer(text, return_tensors='pt')
         model_out = text_model(**token_out).last_hidden_state.squeeze(0)
         text_features = model_out[1:-1, :] # берем состояние всех токенов кроме 1-ого [CLS] и последнего [SEP] токена
-        text_emb = torch.mean(text_features, dim=0)
-        text_embs_list.append(text_emb)
+        # mean pooling
+        pooled_emb = torch.mean(text_features, dim=0)
+
+        # нормирование чтобы значения были в нормальном масштабе перед слиянием с калорийностью и применением во внинимании
+        pooled_emb = torch.nn.functional.normalize(pooled_emb, p=2, dim=0)
+
+        text_embs_list.append(pooled_emb)
 
     text_embs_tenzor = torch.stack(text_embs_list)
     
@@ -94,6 +99,8 @@ def _test(tokenizer: DistilBertTokenizer, text_model: DistilBertModel, dataset_p
 
         text_emb = torch.mean(text_features, dim=0)        
         print('text_emb:', text_emb.shape)
+
+        text_emb = torch.nn.functional.normalize(text_emb, p=2, dim=0)
 
         text_embs_list.append(text_emb)
 

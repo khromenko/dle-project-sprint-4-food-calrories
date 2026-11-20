@@ -13,12 +13,20 @@ import scipy.sparse as sparse
 import torch.nn.utils.rnn as rnn
 
 # locals
-import scripts.config as config
+import scripts.v2_attention.config as config
 import scripts.v2_attention.text_utils as text_utils
-
         
 class MealDataset(Dataset):
-    def __init__(self, model_config: config.MealModelConfig, split='train')
+
+    """
+    Датасет для новой модели (v2) внимания признаков на изображение
+      - собирает заранее подготовленные текстовые эмбеддинги, референсную калорийность ингредиентов 
+      - готовит и аугментирует изображения
+      - дополняет признаки массы
+      - выводит таргет
+    """
+
+    def __init__(self, model_config: config.MealModelConfig, split='train'):
         super().__init__()
 
         self.config = model_config        
@@ -98,17 +106,6 @@ class MealDataset(Dataset):
         """
         Проверка, что значения распределений не отличаются от заданных в конфиге
         """
-        kal = df["total_calories"]
-        assert np.isclose(self.config.TARGET_MEAN, kal.mean(), atol=.5), f'expected TARGET_MEAN = {self.config.TARGET_MEAN}, real data = {kal.mean():.2f}'
-        assert np.isclose(self.config.TARGET_STD, kal.std(), atol=0.5) , f'expected TARGET_STD  = {self.config.TARGET_STD}, real data = {kal.std():.2f}'
-
-        mass = np.log(df['total_mass'])
-        assert np.isclose(self.config.MASS_LOG_MEAN, mass.mean(), atol=.05), f'expected MASS_LOG_MEAN = {self.config.MASS_LOG_MEAN}, real = {mass.mean():.4f}'
-        assert np.isclose(self.config.MASS_LOG_STD, mass.std(), atol=.05), f'expected MASS_LOG_STD = {self.config.MASS_LOG_STD}), real = {mass.std():.4f}'
-        
-        k_100 = np.log(100 * df['total_calories'] / df['total_mass'])
-        assert np.isclose(self.config.K_100_LOG_MEAN, k_100.mean(), atol=.005), f'expected K_100_LOG_MEAN  = {self.config.K_100_LOG_MEAN}, real = {k_100.mean():.4f}'
-        assert np.isclose(self.config.K_100_LOG_STD, k_100.std(), atol=.005), f'expected K_100_LOG_STD  = {self.config.K_100_LOG_STD}, real = {k_100.std():.4f}'
 
         ref_k100 = ref_kal_mappping['energy_kcal']
         assert np.isclose(self.config.K_100_REF_MEAN, ref_k100.mean(), atol=.5), f'expected K_100_REF_MEAN  = {self.config.K_100_REF_MEAN}, real = {ref_k100.mean():.4f}'
@@ -124,13 +121,13 @@ class MealDataset(Dataset):
         
         Returns:
             dict
-                - ingr_embs: torch.Tensor - тензор эмбеддингов ингредиентов [K, emb_dim]
-                - ingr_ref_k100: torch.FloatTensor - тензор справочной калорийности/100г ингредиентов [K, 1], нормализованное значание на MEAN/STD
-                - ingr_mask - маска ингредиентов - фиксирует сколько реальных ингредиентов в тензоре, дополненном до максимальной длины батча
+                - ingr_embs: torch.Tensor - тензор эмбеддингов ингредиентов [S, emb_dim]
+                - ingr_ids: torch.Tensor - id ингредиентов в словаре эмбеддингов
+                - ingr_ref_k100: torch.FloatTensor - тензор справочной калорийности/100г ингредиентов [S, 1], нормализованное значание на MEAN/STD
+                - ingr_mask: torch.Tensor(bool) - маска ингредиентов - фиксирует сколько реальных ингредиентов в тензоре, дополненном до максимальной длины батча
                 - image: torch.Tensor - трансформированное изображение
-                - mass: float - масса блюда - лог масштаб и нормализация на MEAN/STD       
-                - target: float - целевая переменная (total_calories) - нормализованное значание на MEAN/STD                       
-                - target_kal_100: float - калорий на 100г (как дополнительный таргет) - лог масштаб и нормализация на MEAN/STD
+                - mass: torch.Tensor - масса блюда, г
+                - target: torch.Tensor - целевая переменная (total_calories), кал
         """
 
         item = self.df.iloc[index]
@@ -144,7 +141,8 @@ class MealDataset(Dataset):
         ingr_list = text_utils.preprocess_ingredients(raw_ingr_str)
 
         # список эмбеддингов ингредиентов
-        ingr_embs = [self.all_ingr_embs[self.ingr_encoder[ingr]] for ingr in ingr_list]
+        ingr_ids = [self.ingr_encoder[ingr] for ingr in ingr_list]
+        ingr_embs = self.all_ingr_embs[ingr_ids]
         
         # список справочных калорийностей ингредиентов - составлен маппингом с сырыми названиями ингредиентов
         ref_k100 = []
@@ -156,69 +154,59 @@ class MealDataset(Dataset):
             ref_k_100_norm = (ref_k_100_raw - self.config.K_100_REF_MEAN) / self.config.K_100_REF_STD
             ref_k100.append(ref_k_100_norm)  
 
-        # target - norm
+        # target
         target = item['total_calories']        
-        target_norm = (target - self.config.TARGET_MEAN)/self.config.TARGET_STD
-
-        # масса - log + norm
+        
+        # масса 
         mass = item['total_mass']
-        mass_log = np.log(mass)
-        mass_lognorm = (mass_log - self.config.MASS_LOG_MEAN) / self.config.MASS_LOG_STD
-
-        # kal_100 - log + norm
-        kal_100 = target / mass * 100
-        kal_100_log = np.log(kal_100)
-        kal_100_lognorm = (kal_100_log - self.config.K_100_LOG_MEAN) / self.config.K_100_LOG_STD
-
+        
         # image + transform
         original_image = Image.open(self.img_path / dish_id / 'rgb.png')
         image = self.img_transforms(image=np.array(original_image))["image"]
 
         return {
-            'ingr_embs': torch.stack(ingr_embs),
+            'ingr_embs': ingr_embs,
+            'ingr_ids': torch.LongTensor(ingr_ids),
             'ingr_ref_k100': torch.FloatTensor(ref_k100),
-            'ingr_mask': torch.ones(len(ingr_list)),
+            'ingr_mask': torch.ones(len(ingr_list), dtype=torch.bool),
             'image': image,            
-            'mass': mass_lognorm,
-            'target': target_norm,
-            'target_kal_100': kal_100_lognorm
+            'mass': torch.FloatTensor([mass]),
+            'target': torch.FloatTensor([target]),
         }
     
 def collate_fn(batch):
     """
     Собирает батч из эмбеддингов ингредиентов, калорийности, массы, картинок и целевой калорийности и калорийности/100г блюда
-    Выравнивает размерность длины ингредиентов K_i до K_max в батче.
+    Выравнивает размерность длины ингредиентов S_i до S_max в батче.
     Маска `mask` задает сколько реальных ингредиентов.
 
     Returns:
         dict:
             - ingr_embs: torch.Tensor - эмбеддинги ингредиентов, выровненный padding-ом до максимальной длины в батче,
+            - ingr_ids: torch.Tensor - id ингредиентов в словаре эмбеддингов
             - ingr_embs_attention_mask - маскм эмбеддингов ингредиентов,
-            - ref_k100: torch.FloatTensor - справочная калорийности/100г ингредиентов
+            - ref_k100: torch.FloatTensor - справочная калорийности/100г ингредиентов, нормализованное
             - image: torch.Tensor - трансформированные изображения
-            - mass: torch.Tensor - масса блюда
-            
-            - target: torch.Tensor - целевая переменная (total_calories) - нормализованное значание на MEAN/STD
-            - target_kal_100: torch.Tensor - калорий на 100г (как дополнительный таргет)
+            - mass: torch.Tensor - масса блюда, г 
+            - target: torch.Tensor - целевая переменная (total_calories), кал
     """
 
     ingr_embs = rnn.pad_sequence([item['ingr_embs'] for item in batch], batch_first=True, padding_value=0)
+    ingr_ids = rnn.pad_sequence([item['ingr_ids'] for item in batch], batch_first=True, padding_value=0)
     ingr_ref_k100 = rnn.pad_sequence([item['ingr_ref_k100'] for item in batch], batch_first=True, padding_value=0)
     ingr_mask = rnn.pad_sequence([item['ingr_mask'] for item in batch], batch_first=True, padding_value=0)
     
     image = torch.stack([item['image'] for item in batch])
-    mass = torch.FloatTensor([item['mass'] for item in batch])
+    mass = torch.stack([item['mass'] for item in batch])
 
-    target = torch.FloatTensor([item['target'] for item in batch])
-    target_kal_100 = torch.FloatTensor([item['target_kal_100'] for item in batch])
-
+    target = torch.stack([item['target'] for item in batch])
+    
     return {
         'ingr_embs': ingr_embs,
+        'ingr_ids': ingr_ids,
         'ingr_ref_k100': ingr_ref_k100,
         'ingr_mask': ingr_mask,
-        'image': image,
+        'images': image,
         'mass': mass,
-        
-        'target': target,
-        'target_kal_100': target_kal_100
+        'target': target
     }
