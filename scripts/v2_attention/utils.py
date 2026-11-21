@@ -13,7 +13,6 @@ from time import time, perf_counter
 
 # local
 import scripts.v2_attention.config as config
-import scripts.v2_attention.models as models
 
 def set_random(seed=43):
     random.seed(seed)
@@ -30,7 +29,7 @@ def log_fn(debug_msg: str, config: config.MealModelConfig, name=None):
         else:
             print(debug_msg)
 
-def get_optimizer(model:models.MealMode_WithAttention_NN, backbone_lr=1e-4, head_lr=1e-3, k_100_ref_lr=5e-2, weight_decay=1e-2):
+def get_optimizer(model:nn.Module, backbone_lr=1e-4, head_lr=1e-3, k_100_ref_lr=5e-2, weight_decay=1e-2):
     """
     Настройка оптимизатора, три группы параметров с разными learning rate и weight_decay:
     - `backbone_params` - отдельный шаг (минимальный) для backbone моделей, чтобы не разрушить предобученное состояние

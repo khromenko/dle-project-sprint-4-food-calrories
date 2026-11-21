@@ -56,7 +56,7 @@ class MealDataset(Dataset):
 
         # загрузка подготовленных эмбеддингов ингредиентов
         try:
-            text_embs_loaded = torch.load(self.config.TEXT_EMBED_PATH)
+            text_embs_loaded = torch.load(f'{self.config.TEXT_EMBED_PATH}/{self.config.TEXT_EMBED_FILE}')
             self.ingr_encoder = text_embs_loaded['ingr_encoder']
             self.all_ingr_embs = text_embs_loaded['text_embs']            
             

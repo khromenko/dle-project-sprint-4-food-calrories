@@ -7,7 +7,8 @@ class MealModelConfig:
     DATASET_IMAGES_PATH = 'data/images'
     
     # подготовленные текстовые эмбеддинги ингредиентов и кодирощик name-id
-    TEXT_EMBED_PATH = 'data/preprocess/text_emb.pt'
+    TEXT_EMBED_PATH = 'data/preprocess'
+    TEXT_EMBED_FILE = 'text_emb.pt'
 
     # внешний справочник калорийности продуктов
     DATASET_EXT_KAL_MAPPING = 'data/nutrients/processed/ingr_nutr_mapping_result.csv'
@@ -51,7 +52,7 @@ class MealModelConfig:
     LOSS_K_100_WEIGHT = 0.5
 
     # target
-    TARGET_METRIC = 50
+    TARGET_METRIC = 20 #50
 
     MODEL_SAVE_PATH = 'data/model'
     MODEL_SAVE_NAME = 'best_model.pth'

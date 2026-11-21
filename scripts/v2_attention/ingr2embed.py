@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 from transformers import AutoTokenizer, AutoModel, DistilBertTokenizer, DistilBertTokenizerFast, DistilBertModel
 import torch, torch.nn as nn
+import pathlib as path
 
 # locals
 import scripts.v2_attention.config as config
@@ -54,15 +55,16 @@ def make_ingr_embeddings(tokenizer: DistilBertTokenizer, text_model: DistilBertM
 
     text_embs_tenzor = torch.stack(text_embs_list)
     
-    save_path = config.MealModelConfig.TEXT_EMBED_PATH
+    save_path = path.Path(config.MealModelConfig.TEXT_EMBED_PATH)
+
     print('text_embs:', text_embs_tenzor.shape, 'save to file: ', save_path)
-    
+    save_path.mkdir(exist_ok=True)
     torch.save(
         {
             'text_embs': torch.Tensor(text_embs_tenzor),
             'ingr_encoder': ingr_encoder
         },
-        save_path
+        save_path / config.MealModelConfig.TEXT_EMBED_FILE
     )
 
 def _test(tokenizer: DistilBertTokenizer, text_model: DistilBertModel, dataset_path: str):
