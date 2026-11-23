@@ -6,7 +6,7 @@ import pathlib as path
 
 # locals
 import scripts.v2_attention.config as config
-import scripts.v2_attention.text_utils as text_utils
+import scripts.text_utils as text_utils
 
 def make_ingr_embeddings(tokenizer: DistilBertTokenizer, text_model: DistilBertModel, dataset_path: str):
     """

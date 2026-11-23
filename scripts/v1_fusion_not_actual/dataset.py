@@ -12,7 +12,7 @@ import transformers
 import scipy.sparse as sparse
 
 # locals
-import scripts.config as config
+import scripts.v1_fusion_not_actual.config as config
 
 # парсинг списка в виде строки (так хранится в csv) в реальный список
 _INGR_RE = re.compile(r"""['"]([^'"]*)['"]""")

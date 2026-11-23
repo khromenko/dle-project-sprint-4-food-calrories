@@ -14,7 +14,7 @@ from time import time, perf_counter
 
 # local
 import scripts.v2_attention.config as config
-import scripts.v2_attention.text_utils as text_utils
+import scripts.text_utils as text_utils
 
 def set_random(seed=43):
     random.seed(seed)

@@ -4,7 +4,7 @@ import torch
 from PIL import Image
 import albumentations as A
 import timm
-import scripts.config as config
+import scripts.v1_fusion_not_actual.config as config
 import matplotlib.pyplot as plt
 import pathlib as path
 

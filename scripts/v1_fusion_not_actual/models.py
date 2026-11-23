@@ -12,8 +12,8 @@ from tqdm import tqdm
 from time import time, perf_counter
 
 # locals
-import scripts.utils as utils
-import scripts.config as config
+import scripts.v1_fusion_not_actual.utils as utils
+import scripts.v1_fusion_not_actual.config as config
 
 class MealModelNN(nn.Module):
     """

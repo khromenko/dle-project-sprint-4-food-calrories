@@ -12,8 +12,8 @@ from tqdm import tqdm
 from time import time, perf_counter
 
 # local
-import scripts.models as models
-import scripts.config as config
+import scripts.v1_fusin_not_actual.models as models
+import scripts.v1_fusion_not_actual.config as config
 
 def set_random(seed=43):
     random.seed(seed)
