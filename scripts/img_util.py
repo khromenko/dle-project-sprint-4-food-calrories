@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import torch
 from PIL import Image
 import albumentations as A
@@ -7,13 +8,29 @@ import scripts.config as config
 import matplotlib.pyplot as plt
 import pathlib as path
 
-"""
-Вывод изображения и его трансформированной версии.
-Трансформации скопированы из датасета
-[TODO] - использовать датасет для предоставления изображения напрямую
-"""
+def plot_dish_image(dish: pd.Series):
+    plot_image(dish_id=dish['dish_id'], total_calories=dish['total_calories'], total_mass=dish['total_mass'], ingredients=dish['ingr_name'])
 
+def plot_image(dish_id = '', total_calories='', total_mass='', ingredients=''):
+    """
+    Вывод изображения блюда и его характеристи
+    """
+    
+    img_path = path.Path(config.MealModelConfig.DATASET_IMAGES_PATH)
+    image = Image.open(path.Path(img_path) / dish_id / 'rgb.png')
+    
+    plt.imshow(image)
+    plt.title(dish_id)
+    plt.title(f"{dish_id} \n cal: {total_calories}, mass: {total_mass}")
+    plt.xlabel(" \n ".join(ingredients))
+    
 def plot_image_with_transforms(dish_id = 'dish_1560356627'):
+    """
+    Вывод изображения и его трансформированной версии при аугментации в датасете.
+    Трансформации скопированы из датасета
+    [TODO] - использовать датасет для предоставления изображения напрямую
+    """
+
     model_config = config.MealModelConfig()
     img_path = path.Path(model_config.DATASET_IMAGES_PATH)
     img_model_config = timm.get_pretrained_cfg(model_name=model_config.IMG_MODEL_NAME); assert img_model_config is not None

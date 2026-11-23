@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import os, re, random
+import pandas as pd
 import pathlib as path
 import numpy as np
 import torch, torch.nn as nn
@@ -13,6 +14,7 @@ from time import time, perf_counter
 
 # local
 import scripts.v2_attention.config as config
+import scripts.v2_attention.text_utils as text_utils
 
 def set_random(seed=43):
     random.seed(seed)
@@ -28,6 +30,18 @@ def log_fn(debug_msg: str, config: config.MealModelConfig, name=None):
             pass
         else:
             print(debug_msg)
+
+def read_preprocessed_meal_dataset():
+    """
+    Возвращает рабочий подготовленный датасет с блюдами
+    """
+    meal_df = pd.read_csv(config.MealModelConfig.DATASET_PATH)
+
+    # распарсим ингредиенты из текста обратно в список
+    if meal_df['ingr_name'].dtype == 'object':
+        meal_df['ingr_name'] = meal_df['ingr_name'].apply(text_utils.parse_str_to_list)
+
+    return meal_df
 
 def get_optimizer(model:nn.Module, backbone_lr=1e-4, head_lr=1e-3, k_100_ref_lr=5e-2, weight_decay=1e-2):
     """
