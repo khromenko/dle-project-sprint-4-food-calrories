@@ -12,7 +12,7 @@ from tqdm import tqdm
 from time import time, perf_counter
 
 # local
-import scripts.v1_fusin_not_actual.models as models
+import scripts.v1_fusion_not_actual.models as models
 import scripts.v1_fusion_not_actual.config as config
 
 def set_random(seed=43):
@@ -338,7 +338,7 @@ def restore_checkpoint(model: models.MealModelNN, config: config.MealModelConfig
 
     return start_epoch, best_epoch, best_metric
 
-def plof_train_log(train_loss_history, val_loss_history, train_mae_history, val_mae_history, train_time_history, val_time_history):
+def plot_train_log(train_loss_history, val_loss_history, train_mae_history, val_mae_history, train_time_history, val_time_history):
     fix, axs = plt.subplots(1,3, figsize=(12,5))
     ax=axs[0]
     ax.plot(train_loss_history)
