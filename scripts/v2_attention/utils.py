@@ -122,6 +122,20 @@ def smooth_l1_metric(pred: torch.Tensor, real: torch.Tensor, delta=1.0):
 
 
 def train(model:nn.Module, config: config.MealModelConfig, optimizer: torch.optim.AdamW, dataloader: DataLoader, scheduler = None):
+    """
+    Выполнение цикла обучения
+
+    Returns:
+        tuple:
+            - train_loss_huber - значение loss-функции
+            - train_mae - значение метрики MAE для целевой переменной (калорийность блюда) 
+            - train_kal_100_mae - значение метрики MAE для вспомогательного предсказания - калорийность/100г
+            - ingr_mass - вектор предсказний массы ингредиентов
+            - train_k_100_delta_global - вектор глобальных корректировок справочника калорийности продуктов
+            - train_k_100_delta_img - вектор дополнительных корректировок справочника калорийности продуктов на основе признаков изображения
+            - train_time - время цикла (сек)
+    """
+    
     log = partial(log_fn, config=config, name='train')
     log('   --- train()')
     
@@ -229,6 +243,19 @@ def train(model:nn.Module, config: config.MealModelConfig, optimizer: torch.opti
     return train_loss_huber, train_mae, train_kal_100_mae, ingr_mass, train_k_100_delta_global, train_k_100_delta_img, perf_counter() - start
 
 def validate(model: nn.Module, config: config.MealModelConfig, dataloader: DataLoader):
+    """
+    Выполнение цикла валидации
+
+    Returns:
+        tuple:
+            - val_loss_huber - значение loss-функции
+            - val_mae - значение метрики MAE для целевой переменной (калорийность блюда) 
+            - val_kal_100_mae - значение метрики MAE для вспомогательного предсказания - калорийность/100г
+            - ingr_mass - вектор предсказний массы ингредиентов
+            - val_k_100_delta_global - вектор глобальных корректировок справочника калорийности продуктов
+            - val_k_100_delta_img - вектор дополнительных корректировок справочника калорийности продуктов на основе признаков изображения
+            - val_time - время цикла (сек)
+    """
     log = partial(log_fn, config=config, name='validate')
     log('   -- validate()')
 
@@ -274,8 +301,8 @@ def validate(model: nn.Module, config: config.MealModelConfig, dataloader: DataL
             running_mae += kal_mae.item()
             running_kal_100_mae += kal_100_mae.item()
             
-            running_k_100_delta_global += torch.mean(k_100_delta_global).item()
-            running_k_100_delta_img += torch.mean(k_100_delta_img).item()
+            running_k_100_delta_global += torch.mean(torch.abs(k_100_delta_global)).item()
+            running_k_100_delta_img += torch.mean(torch.abs(k_100_delta_img)).item()
         
             log(f'loss = {loss.item():.4f}, ' 
                 f'loss_huber_kal = {loss_huber_kal.item():.4f}, '
