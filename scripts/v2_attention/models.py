@@ -239,6 +239,8 @@ class MealMode_WithAttention_NN(nn.Module):
         total_kal_pred = torch.sum(k_100_pred * mass_i / 100, dim=-1)    # [B]
         self.log(f'total_kal_pred = {total_kal_pred.shape}')
 
+        self.last_z = z
+
         return total_kal_pred.unsqueeze(-1), total_k_100_pred.unsqueeze(-1), mass_i, (k_100_delta_1, k_100_delta_2)
 
 def unfreeze_model_params(model: MealMode_WithAttention_NN, config: config.MealModelConfig):

@@ -10,10 +10,10 @@ import pathlib as path
 import scripts.v2_attention.config as config
 import scripts.v2_attention.dataset as dataset
 
-def plot_dish_image(dish: pd.Series):
-    plot_image(dish_id=dish['dish_id'], total_calories=dish['total_calories'], total_mass=dish['total_mass'], ingredients=dish['ingr_name'])
+def plot_dish_image(dish: pd.Series, title_prefix = ''):
+    plot_image(dish_id=dish['dish_id'], total_calories=dish['total_calories'], total_mass=dish['total_mass'], ingredients=dish['ingr_name'], title_prefix=title_prefix)
 
-def plot_image(dish_id = '', total_calories='', total_mass='', ingredients=''):
+def plot_image(dish_id = '', total_calories='', total_mass='', ingredients:list = None, title_prefix=''):
     """
     Вывод изображения блюда и его характеристи
     """
@@ -22,8 +22,9 @@ def plot_image(dish_id = '', total_calories='', total_mass='', ingredients=''):
     image = Image.open(path.Path(img_path) / dish_id / 'rgb.png')
     
     plt.imshow(image)
-    plt.title(dish_id)
-    plt.title(f"{dish_id} \n cal: {total_calories}, mass: {total_mass}")
+
+    title_prefix = f'{title_prefix} \n {dish_id}' if title_prefix else dish_id
+    plt.title(f"{title_prefix} \n cal: {total_calories:.2f} kcal, mass: {total_mass:.2f} g")
     plt.xlabel(" \n ".join(ingredients))
     
 def plot_image_with_transforms(dish_id = 'dish_1560356627'):
